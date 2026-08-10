@@ -1,0 +1,9 @@
+[project]
+name = "arrosage-ingest"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "paho-mqtt==2.1.0",
+    "SQLAlchemy==2.0.36",
+    "psycopg[binary]==3.2.3",
+]
