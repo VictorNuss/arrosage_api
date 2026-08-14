@@ -111,10 +111,20 @@ def build_firmware_tab():
                     dbc.ModalHeader("Confirmer la mise à jour"),
                     dbc.ModalBody(id="ota-modal-body"),
                     dbc.ModalFooter(
-                        [
-                            dbc.Button("Annuler", id="ota-cancel-btn", color="secondary"),
-                            dbc.Button("Confirmer et envoyer", id="ota-confirm-btn", color="danger"),
-                        ]
+                        dcc.Loading(
+                            dbc.ButtonGroup(
+                                [
+                                    dbc.Button("Annuler", id="ota-cancel-btn", color="secondary"),
+                                    dbc.Button(
+                                        "Confirmer et envoyer",
+                                        id="ota-confirm-btn",
+                                        color="danger",
+                                        disabled=False,
+                                    ),
+                                ]
+                            ),
+                            type="circle",
+                        )
                     ),
                 ],
                 id="ota-confirm-modal",

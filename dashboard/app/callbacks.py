@@ -555,17 +555,10 @@ def register_callbacks(app):
     def cancel_ota(_n):
         return False
 
-    app.clientside_callback(
-        "function(n_clicks) { return n_clicks ? true : window.dash_clientside.no_update; }",
-        Output("ota-confirm-btn", "disabled", allow_duplicate=True),
-        Input("ota-confirm-btn", "n_clicks"),
-        prevent_initial_call=True,
-    )
-
     @app.callback(
         Output("ota-feedback", "children", allow_duplicate=True),
         Output("ota-confirm-modal", "is_open", allow_duplicate=True),
-        Output("ota-confirm-btn", "disabled", allow_duplicate=True),
+        Output("ota-confirm-btn", "disabled"),
         Input("ota-confirm-btn", "n_clicks"),
         State("ota-pending-upload", "data"),
         prevent_initial_call=True,
