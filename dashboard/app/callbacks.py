@@ -7,7 +7,7 @@ from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 from plotly.subplots import make_subplots
 import dash_bootstrap_components as dbc
 
-from . import config, mqtt_control, ota_client, queries
+from . import config, mqtt_control, ota_client, queries, valve_timers
 
 _VALVE_OPEN_COLOR = "#28a745"
 _VALVE_CLOSED_COLOR = "#dc3545"
@@ -33,6 +33,9 @@ def _build_valve_chip(row):
     is_open = row["value"] >= 0.5
     device_id = row["device_id"]
     metric = row["metric"]
+
+    remaining = valve_timers.get_remaining_seconds(device_id, metric) if is_open else None
+
     return dbc.Col(
         dbc.Card(
             dbc.CardBody(
@@ -42,7 +45,14 @@ def _build_valve_chip(row):
                     dbc.Badge(
                         "OUVERTE" if is_open else "FERMÉE",
                         color="success" if is_open else "secondary",
-                        className="mt-1 mb-2 d-block",
+                        className="mt-1 mb-1 d-block",
+                    ),
+                    html.Div(
+                        f"Ferme dans {valve_timers.format_remaining(remaining)}"
+                        if remaining is not None
+                        else "",
+                        className="text-muted small mb-1",
+                        style={"minHeight": "1.1em"},
                     ),
                     dcc.Dropdown(
                         id={"type": "valve-duration", "device": device_id, "metric": metric},
@@ -298,6 +308,8 @@ def register_callbacks(app):
                     break
             duration_s = int(duration_min) * 60 if duration_min else None
             ok = mqtt_control.send_valve_command(device_id, metric, "open", duration_s)
+            if ok and duration_s:
+                valve_timers.mark_opened(device_id, metric, duration_s)
             message = (
                 f"Ouverture de {metric} ({device_id}) pour {duration_min} min envoyée."
                 if ok
@@ -305,6 +317,8 @@ def register_callbacks(app):
             )
         else:
             ok = mqtt_control.send_valve_command(device_id, metric, "close")
+            if ok:
+                valve_timers.mark_closed(device_id, metric)
             message = (
                 f"Fermeture de {metric} ({device_id}) envoyée."
                 if ok
