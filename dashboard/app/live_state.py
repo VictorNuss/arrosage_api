@@ -104,6 +104,7 @@ def _on_message(client, userdata, message):
                 "unit": _infer_unit(metric),
                 "time": now,
             }
+    log.info("Cache live: mis à jour pour %s (%s champs)", device_id, len(data))
 
 
 def get_latest_readings() -> list[dict]:

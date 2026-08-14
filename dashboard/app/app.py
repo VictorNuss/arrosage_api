@@ -1,9 +1,13 @@
+import logging
+
 import dash
 import dash_bootstrap_components as dbc
 
 from . import live_state
 from .callbacks import register_callbacks
 from .layout import build_layout
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY], title="Supervision Arrosage")
 app.layout = build_layout()
