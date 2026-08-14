@@ -2,67 +2,79 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from . import arome_client, config, db, dpclim_client
+from . import config, db, open_meteo_client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("weather.main")
 
 CHECK_INTERVAL_SECONDS = 60
 
+# Pas un vrai identifiant de station : Open-Meteo interroge directement les
+# coordonnées configurées, sans notion de station météo.
+OBSERVED_SOURCE_LABEL = "open-meteo"
 
-def run_forecast_cycle(engine):
-    if not config.METEOFRANCE_API_KEY:
-        log.warning("METEOFRANCE_API_KEY absente : cycle prévisions ignoré.")
-        return
+
+def run_cycle(engine):
     try:
-        by_source = arome_client.fetch_forecast_series(config.WEATHER_LAT, config.WEATHER_LON)
+        rows = open_meteo_client.fetch_series(
+            config.WEATHER_LAT,
+            config.WEATHER_LON,
+            past_days=config.OPEN_METEO_PAST_DAYS,
+            forecast_days=config.OPEN_METEO_FORECAST_DAYS,
+        )
     except Exception:
-        log.exception("Échec du cycle de prévisions AROME/ARPEGE")
-        return
-
-    total = sum(len(rows) for rows in by_source.values())
-    if not total:
-        log.warning("Aucune donnée de prévision récupérée ce cycle.")
-        return
-
-    fetched_at = datetime.now(timezone.utc)
-    for source, source_rows in by_source.items():
-        db.replace_forecast(engine, fetched_at, source, config.WEATHER_LAT, config.WEATHER_LON, source_rows)
-    log.info("Prévisions remplacées (instantané): %s points", total)
-
-
-def run_observed_cycle(engine):
-    if not config.METEOFRANCE_API_KEY or not config.METEOFRANCE_STATION_ID:
-        log.warning("METEOFRANCE_API_KEY ou METEOFRANCE_STATION_ID absente : cycle observations ignoré.")
-        return
-    try:
-        rows = dpclim_client.fetch_observed_series(config.METEOFRANCE_STATION_ID)
-    except Exception:
-        log.exception("Échec du cycle d'observations DPClim")
+        log.exception("Échec du cycle Open-Meteo")
         return
 
     if not rows:
-        log.warning("Aucune observation récupérée ce cycle.")
+        log.warning("Aucune donnée récupérée ce cycle.")
         return
 
-    db.upsert_observed(engine, config.METEOFRANCE_STATION_ID, rows)
-    log.info("Observations insérées/mises à jour: %s points", len(rows))
+    now = datetime.now(timezone.utc)
+    fetched_at = now
+
+    forecast_by_source = {}
+    # AROME et ARPEGE renvoient tous les deux des points sur le passé récent
+    # (chevauchement) : dédupliqué par (metric, time) en préférant AROME,
+    # sinon l'upsert planterait (ON CONFLICT DO UPDATE ne peut pas toucher
+    # deux fois la même ligne dans un même batch).
+    observed_by_key = {}
+    for row in rows:
+        if row["time"] < now:
+            key = (row["metric"], row["time"])
+            if key not in observed_by_key or row["source"] == "AROME":
+                observed_by_key[key] = row
+        else:
+            forecast_by_source.setdefault(row["source"], []).append(
+                {"valid_time": row["time"], "metric": row["metric"], "value": row["value"]}
+            )
+
+    observed_rows = [
+        {"time": row["time"], "metric": row["metric"], "value": row["value"]}
+        for row in observed_by_key.values()
+    ]
+
+    for source, source_rows in forecast_by_source.items():
+        db.replace_forecast(engine, fetched_at, source, config.WEATHER_LAT, config.WEATHER_LON, source_rows)
+    if observed_rows:
+        db.upsert_observed(engine, OBSERVED_SOURCE_LABEL, observed_rows)
+
+    log.info(
+        "Cycle Open-Meteo: %s points de prévision, %s points passés",
+        sum(len(v) for v in forecast_by_source.values()),
+        len(observed_rows),
+    )
 
 
 def main():
     engine = db.create_engine_with_retry()
 
-    next_forecast_run = 0.0
-    next_observed_run = 0.0
-
+    next_run = 0.0
     while True:
         now = time.monotonic()
-        if now >= next_forecast_run:
-            run_forecast_cycle(engine)
-            next_forecast_run = now + config.FORECAST_REFRESH_INTERVAL_SECONDS
-        if now >= next_observed_run:
-            run_observed_cycle(engine)
-            next_observed_run = now + config.OBSERVED_REFRESH_INTERVAL_SECONDS
+        if now >= next_run:
+            run_cycle(engine)
+            next_run = now + config.REFRESH_INTERVAL_SECONDS
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 

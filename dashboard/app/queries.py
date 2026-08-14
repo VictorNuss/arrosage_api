@@ -131,29 +131,27 @@ def get_tank_level() -> dict | None:
 def get_rain_outlook() -> dict | None:
     """Cumul de pluie prévu sur les 3h et les 48h à venir.
 
-    Le paramètre 'precipitation_mm' de weather_forecast est, par convention
-    Météo-France pour le produit AROME/ARPEGE "précipitation totale", cumulé
-    depuis le début du run plutôt qu'exprimé par pas de temps. On calcule
-    donc le cumul sur une fenêtre par différence entre les deux échéances les
-    plus proches de ses bornes, plutôt qu'en sommant les valeurs brutes (ce
-    qui compterait plusieurs fois la même pluie). Renvoie None si aucune
-    prévision n'est disponible (service météo pas configuré).
+    Le paramètre 'precipitation_mm' d'Open-Meteo est la pluie tombée pendant
+    l'heure précédant chaque horodatage (pas un cumul depuis le début du
+    run) : on peut donc simplement sommer les valeurs sur la fenêtre voulue.
+    AROME et ARPEGE se chevauchent sur les échéances proches ; on garde
+    AROME en priorité (plus fin) pour ne pas compter la même pluie deux
+    fois. Renvoie None si aucune prévision n'est disponible (service météo
+    pas encore alimenté).
     """
     forecast = get_weather_forecast()
-    precip = forecast[forecast["metric"] == "precipitation_mm"].sort_values("valid_time")
+    precip = forecast[forecast["metric"] == "precipitation_mm"]
     if precip.empty:
         return None
 
+    source_priority = {"AROME": 0, "ARPEGE": 1}
+    precip = precip.sort_values("source", key=lambda s: s.map(source_priority).fillna(99))
+    precip = precip.drop_duplicates(subset="valid_time", keep="first")
+
     now = datetime.now(timezone.utc)
 
-    def cumulative_at(target):
-        past = precip[precip["valid_time"] <= target]
-        if past.empty:
-            return 0.0
-        return float(past.iloc[-1]["value"])
+    def sum_window(hours):
+        window = precip[(precip["valid_time"] >= now) & (precip["valid_time"] <= now + timedelta(hours=hours))]
+        return float(window["value"].sum())
 
-    baseline = cumulative_at(now)
-    return {
-        "rain_3h_mm": max(0.0, cumulative_at(now + timedelta(hours=3)) - baseline),
-        "rain_48h_mm": max(0.0, cumulative_at(now + timedelta(hours=48)) - baseline),
-    }
+    return {"rain_3h_mm": sum_window(3), "rain_48h_mm": sum_window(48)}

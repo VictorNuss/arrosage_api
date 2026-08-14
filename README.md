@@ -89,53 +89,38 @@ UPDATE devices SET name = 'Serre nord', lat = 45.19, lon = 5.72
 WHERE device_id = 'jardin-1';
 ```
 
-## Service météo (AROME / ARPEGE / DPClim)
+## Service météo (Open-Meteo — AROME / ARPEGE)
 
-Ce service est optionnel : sans clé API, il ne fait rien et le dashboard
-affiche simplement "service météo non configuré".
+Gratuit, **sans clé API ni compte** pour un usage non-commercial :
+[Open-Meteo](https://open-meteo.com) utilise réellement les modèles
+Météo-France (AROME, ARPEGE) en interne, exposés en JSON simple. Le service
+`weather` fonctionne donc dès le démarrage, sans configuration
+supplémentaire au-delà de `WEATHER_LAT`/`WEATHER_LON` (coordonnées du
+jardin).
 
-### Obtenir une clé API
-
-1. Créer un compte sur https://portail-api.meteofrance.fr
-2. Souscrire aux API **AROME**, **ARPEGE** et **DPClim (Données Publiques
-   Climatologiques)** depuis le portail (souscriptions gratuites,
-   individuelles par API).
-3. Générer une clé applicative (apikey) et la mettre dans `.env` :
-   `METEOFRANCE_API_KEY=...`
-
-### Coordonnées et station
-
-- `WEATHER_LAT` / `WEATHER_LON` : coordonnées du jardin, utilisées pour
-  extraire le point de grille le plus proche dans les prévisions AROME/ARPEGE.
-- `METEOFRANCE_STATION_ID` : identifiant de la station Météo-France la plus
-  proche pour la pluviométrie passée (API DPClim). Pour la trouver :
-
-  ```bash
-  curl -H "apikey: VOTRE_CLE" \
-    "https://public-api.meteofrance.fr/public/DPClim/v1/liste-stations/quotidienne?id-departement=38"
-  ```
-
-  (remplacer `38` par le numéro de département) et repérer la station la
-  plus proche de vos coordonnées dans la réponse JSON.
+> Historique : ce projet utilisait initialement l'API officielle du portail
+> Météo-France (GRIB2/WCS + DPClim), qui nécessitait un compte et une clé
+> par produit. Abandonné au profit d'Open-Meteo suite à un souci de compte,
+> et parce que c'est plus simple à opérer (pas de dépendance eccodes/cfgrib,
+> pas de recherche de station DPClim).
 
 ### Fonctionnement
 
-- Prévisions (AROME ~42h, complétées par ARPEGE jusqu'à J+4) : rafraîchies
-  toutes les 3h. `weather_forecast` est un **instantané, pas un historique** :
-  à chaque cycle, les lignes de la source concernée (AROME ou ARPEGE) sont
-  entièrement remplacées par la nouvelle prévision (une prévision périmée n'a
-  pas de valeur une fois la suivante disponible, et ça évite de faire grossir
-  la base indéfiniment). Si vous voulez comparer prévision vs réalité dans le
-  temps, il faudra dupliquer les lignes vers une table d'historique séparée
-  avant le remplacement (non fait par défaut).
-- Pluviométrie/température passées (DPClim) : rafraîchies 1x/jour, stockées
-  dans `weather_observed`.
-- Les identifiants de ressource WCS (AROME/ARPEGE) sont découverts
-  dynamiquement via `GetCapabilities` à chaque cycle plutôt que codés en dur,
-  car ils incluent l'horodatage du run et changent en permanence. Si
-  Météo-France change sa nomenclature de paramètres, ajustez
-  `weather/app/config.py::PARAMETER_KEYWORDS` — les logs du service listent
-  les CoverageId reçus quand aucune correspondance n'est trouvée.
+- Un seul appel HTTP par cycle (toutes les 3h) récupère à la fois le passé
+  récent (7 jours) et la prévision (4 jours) pour AROME et ARPEGE.
+- `weather_forecast` est un **instantané, pas un historique** : à chaque
+  cycle, les lignes de la source concernée (AROME ou ARPEGE) sont
+  entièrement remplacées par la nouvelle prévision.
+- `weather_observed` (passé récent) est mis à jour par upsert (idempotent).
+- La précipitation horaire renvoyée par Open-Meteo est la pluie tombée
+  **pendant l'heure précédente** (pas un cumul depuis le début du run) : le
+  dashboard peut donc simplement sommer sur une fenêtre plutôt que calculer
+  une différence entre échéances.
+- AROME (plus fin, ~48h) et ARPEGE (plus large, jusqu'à J+4) se chevauchent
+  sur les échéances proches ; le dashboard privilégie AROME sur cette plage
+  pour l'indicateur pluie (voir `dashboard/app/queries.py::get_rain_outlook`)
+  et affiche les deux sources comme des courbes séparées dans l'onglet
+  Météo.
 
 ### Débogage
 
@@ -165,7 +150,9 @@ Puis quatre onglets :
   (utilise automatiquement l'agrégat horaire au-delà de 2 jours pour rester
   rapide). Les vannes s'affichent séparément des courbes de capteurs, en
   carrés rouge (fermée) / vert (ouverte) sur une piste synchronisée.
-- **Météo** : prévisions AROME/ARPEGE et cumul de pluie passé.
+- **Météo** : prévisions AROME/ARPEGE, cumul de pluie passé, et une carte
+  radar interactive (widget [Windy](https://www.windy.com), gratuit, sans
+  clé API — centrée sur `WEATHER_LAT`/`WEATHER_LON`).
 - **Firmware** : mise à jour OTA par device. Renseigner une fois l'IP locale
   fixe de chaque device (bouton "Enregistrer", stockée dans
   `devices.ip_address`), puis choisir un fichier `.bin` et cliquer

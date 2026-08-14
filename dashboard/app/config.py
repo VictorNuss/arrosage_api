@@ -35,3 +35,7 @@ MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD") or None
 
 VALVE_DURATION_OPTIONS_MIN = [5, 10, 15, 30, 60]
 DEFAULT_VALVE_DURATION_MIN = 10
+
+# --- Carte radar (widget Windy, gratuit, sans clé API) ---
+WEATHER_LAT = float(os.environ.get("WEATHER_LAT", "45.1885"))
+WEATHER_LON = float(os.environ.get("WEATHER_LON", "5.7245"))

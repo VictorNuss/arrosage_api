@@ -72,11 +72,29 @@ def build_history_tab():
     )
 
 
+def _windy_radar_url():
+    return (
+        "https://embed.windy.com/embed2.html"
+        f"?lat={config.WEATHER_LAT}&lon={config.WEATHER_LON}"
+        f"&detailLat={config.WEATHER_LAT}&detailLon={config.WEATHER_LON}"
+        "&width=650&height=450&zoom=8&level=surface"
+        "&overlay=radar&product=radar"
+        "&menu=&message=true&marker=true&calendar=now&pressure="
+        "&type=map&location=coordinates&detail="
+        "&metricWind=default&metricTemp=default&radarRange=-1"
+    )
+
+
 def build_weather_tab():
     return html.Div(
         [
             dcc.Interval(id="weather-interval", interval=5 * 60_000),
             html.Div(id="weather-content"),
+            html.H5("Carte radar (Windy)", className="pt-4"),
+            html.Iframe(
+                src=_windy_radar_url(),
+                style={"border": "none", "width": "100%", "height": "450px"},
+            ),
         ],
         className="pt-3",
     )

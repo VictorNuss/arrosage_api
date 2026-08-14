@@ -409,8 +409,7 @@ def register_callbacks(app):
 
         if forecast.empty and observed.empty:
             return dbc.Alert(
-                "Service météo non configuré ou pas encore de données "
-                "(vérifiez METEOFRANCE_API_KEY dans .env).",
+                "Pas encore de données météo (le service se met à jour toutes les 3h).",
                 color="warning",
             )
 
@@ -418,12 +417,18 @@ def register_callbacks(app):
 
         if not forecast.empty:
             fig = go.Figure()
-            for metric, group in forecast.groupby("metric"):
+            # Groupé par (source, métrique) : AROME et ARPEGE se chevauchent
+            # sur les échéances proches, les mélanger dans une même trace
+            # donnerait une courbe qui va et vient entre les deux valeurs.
+            for (source, metric), group in forecast.groupby(["source", "metric"]):
+                group = group.sort_values("valid_time")
                 fig.add_trace(
-                    go.Scatter(x=group["valid_time"], y=group["value"], mode="lines", name=metric)
+                    go.Scatter(
+                        x=group["valid_time"], y=group["value"], mode="lines", name=f"{source} · {metric}"
+                    )
                 )
             fig.update_layout(
-                title="Prévisions (AROME / ARPEGE)", margin=dict(l=40, r=20, t=40, b=40)
+                title="Prévisions (AROME / ARPEGE, via Open-Meteo)", margin=dict(l=40, r=20, t=40, b=40)
             )
             children.append(dcc.Graph(figure=fig))
         else:
