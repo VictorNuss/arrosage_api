@@ -15,7 +15,11 @@ DATABASE_URL = (
 # que la table brute.
 HOURLY_AGGREGATE_THRESHOLD_DAYS = 2
 
-OVERVIEW_REFRESH_INTERVAL_MS = 15_000
+# Le panneau vannes/vue d'ensemble interroge get_latest_readings(), qui
+# fusionne la base avec le cache mémoire alimenté par live_state.py (mis à
+# jour instantanément à la réception MQTT) : un intervalle court reste bon
+# marché puisqu'il ne s'agit plus d'attendre le batching de l'ingest.
+OVERVIEW_REFRESH_INTERVAL_MS = 2_000
 
 # Métrique utilisée comme niveau de la cuve à eau, et hauteur (cm) du capteur
 # quand la cuve est pleine.
@@ -27,7 +31,7 @@ TANK_FULL_THRESHOLD_PCT = 95
 # pluie prévue" plutôt que de signaler un bruit de mesure/arrondi.
 RAIN_THRESHOLD_MM = 0.2
 
-# --- MQTT (envoi de commandes d'ouverture/fermeture de vannes) ---
+# --- MQTT (commandes de vannes + abonnement live_state pour l'état instantané) ---
 MQTT_HOST = os.environ.get("MQTT_HOST", "mosquitto")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 MQTT_USERNAME = os.environ.get("MQTT_USERNAME") or None

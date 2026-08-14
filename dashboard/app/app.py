@@ -1,12 +1,15 @@
 import dash
 import dash_bootstrap_components as dbc
 
+from . import live_state
 from .callbacks import register_callbacks
 from .layout import build_layout
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY], title="Supervision Arrosage")
 app.layout = build_layout()
 register_callbacks(app)
+
+live_state.start()
 
 server = app.server
 

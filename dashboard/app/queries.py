@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 from sqlalchemy import create_engine, func, select
 
-from . import config
+from . import config, live_state
 from .schema import devices, sensor_readings, sensor_readings_hourly, weather_forecast, weather_observed
 
 engine = create_engine(config.DATABASE_URL, pool_pre_ping=True)
@@ -43,7 +43,15 @@ def get_known_metrics() -> list[str]:
 
 
 def get_latest_readings() -> pd.DataFrame:
-    """Dernière valeur connue pour chaque (device, metric)."""
+    """Dernière valeur connue pour chaque (device, metric).
+
+    Fusionne l'instantané base (source de vérité durable) avec le cache
+    mémoire alimenté par l'abonnement MQTT direct du dashboard
+    (live_state.py) : ce dernier reflète la dernière valeur reçue à
+    l'instant près, sans attendre le batching de `ingest` ni un nouveau
+    poll. En cas de clé (device, metric) présente des deux côtés, la plus
+    récente des deux l'emporte.
+    """
     stmt = (
         select(
             sensor_readings.c.device_id,
@@ -56,7 +64,20 @@ def get_latest_readings() -> pd.DataFrame:
         .order_by(sensor_readings.c.device_id, sensor_readings.c.metric, sensor_readings.c.time.desc())
     )
     with engine.connect() as conn:
-        return pd.read_sql_query(stmt, conn)
+        db_df = pd.read_sql_query(stmt, conn)
+
+    live_rows = live_state.get_latest_readings()
+    if not live_rows:
+        return db_df
+
+    live_df = pd.DataFrame(live_rows, columns=["device_id", "metric", "value", "unit", "time"])
+    live_df["time"] = pd.to_datetime(live_df["time"], utc=True)
+    if not db_df.empty:
+        db_df["time"] = pd.to_datetime(db_df["time"], utc=True)
+
+    combined = pd.concat([db_df, live_df], ignore_index=True)
+    combined = combined.sort_values("time").drop_duplicates(subset=["device_id", "metric"], keep="last")
+    return combined.reset_index(drop=True)
 
 
 def get_history(devices_filter: list[str], metrics: list[str], start: datetime, end: datetime) -> pd.DataFrame:
