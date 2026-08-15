@@ -9,40 +9,45 @@
 
 ## État (device → serveur)
 
-Topic : `arrosage/<device_id>/etat`, QoS 1, **retain=true**, publié toutes
-les ~60s.
+Un topic **par mesure/vanne** plutôt qu'un JSON combiné :
+
+```
+arrosage/<device_id>/etat/<key>
+```
 
 `<device_id>` est un identifiant stable et unique par appareil (ex:
 `jardin-1`). Il sert de clé pour la table `devices` et apparaît tel quel
-dans le dashboard tant qu'aucun nom n'est renseigné en base.
+dans le dashboard tant qu'aucun nom n'est renseigné en base. `<key>` est un
+des noms de mesure (`water_level_cm`, `humidity_pct`, `temperature_c`,
+`battery_v`) ou de vanne (`vanne_1`, `vanne_2`, `vanne_3`, ...).
 
+QoS 1, **retain=true sur chaque sous-topic**, publié **uniquement quand une
+donnée réelle et fraîche existe** — pas de cycle périodique, pas de valeur
+bidon. Un capteur jamais lu avec succès depuis le boot du device ne publie
+simplement rien sur son topic.
+
+Payload capteur :
 ```json
-{
-  "ts": "2026-07-16T10:00:00Z",
-  "water_level_cm": 34.5,
-  "humidity_pct": 62.1,
-  "temperature_c": 21.3,
-  "battery_v": 3.98,
-  "vanne_1": "open",
-  "vanne_2": "closed",
-  "vanne_3": "closed"
-}
+{"value": 34.5}
+```
+Payload vanne :
+```json
+{"state": "open"}
 ```
 
 Règles :
-- Toutes les clés sont **toujours présentes** dans chaque message (le
-  firmware n'omet jamais un champ, même si la valeur n'a pas encore de
-  lecture fiable).
-- `battery_v` vaut toujours `0.0` (alimentation secteur, pas de batterie sur
-  ce modèle) — pas un vrai capteur pour l'instant.
-- `water_level_cm` peut valoir `0.0` avant la première lecture réelle du
-  capteur : ne pas interpréter ça comme "cuve vide" dans une future
-  évolution du dashboard (actuellement le dashboard ne fait pas cette
-  distinction, à garder en tête si on l'affine).
+- Pas de champ `ts` : le backend utilise l'horodatage de réception MQTT.
+- **L'absence d'un message pour une clé ne veut pas dire "capteur en
+  panne"** : ça veut juste dire "rien de neuf depuis la dernière valeur
+  connue". Le `retain` du broker redonne la dernière valeur connue à un
+  abonné qui (re)démarre ou se reconnecte.
 - Les métriques de vannes contiennent `vanne` dans leur nom, valeur
-  `"open"`/`"closed"` (chaînes).
+  `"open"`/`"closed"` (chaînes) dans le champ `state`.
 - Suffixes de nom reconnus par le dashboard pour l'unité affichée : `_cm`,
   `_mm`, `_pct`, `_c` (°C), `_v` (V).
+- Le backend s'abonne avec le wildcard `arrosage/+/etat/#` (un seul niveau
+  après `etat` est attendu, mais `#` reste plus tolérant que `+` si jamais
+  ça évolue).
 
 ## Commande des vannes (serveur → device)
 
@@ -57,6 +62,9 @@ Topic : `arrosage/<device_id>/commande`, QoS 1, **jamais retain**.
 ```json
 {"action": "stop_all"}
 ```
+```json
+{"action": "get_status"}
+```
 
 Règles :
 - `action: "open"` + `duration_s` → le **firmware** gère localement le
@@ -67,11 +75,18 @@ Règles :
 - `action: "stop_all"` → ferme toutes les vannes immédiatement (pas de champ
   `vanne`). Pas encore de bouton dédié dans le dashboard actuel, mais le
   firmware doit le supporter.
+- `action: "get_status"` → demande au device de republier son état complet
+  connu : l'état de toutes ses vannes (toujours connues), et la dernière
+  valeur connue de chaque capteur **déjà lu au moins une fois avec succès**
+  depuis le boot (un capteur jamais lu reste absent de la réponse — même
+  logique qu'au repos). Utilisé par le backend pour se resynchroniser (ex:
+  après un redémarrage qui a perdu son cache d'état), en plus des messages
+  retenus automatiquement republiés par le broker à l'abonnement.
 - Le message n'est **jamais retenu** : un redémarrage du device ne rejoue
   aucune commande passée (pas de risque de commande périmée à gérer).
 - Après toute action sur une vanne (commande ou fin de minuteur), le
-  firmware republie immédiatement un état complet sur `.../etat` plutôt que
-  d'attendre le prochain cycle périodique, pour que le dashboard reflète le
+  firmware republie immédiatement son état (`.../etat/<vanne>`) plutôt que
+  d'attendre une prochaine lecture, pour que le dashboard reflète le
   changement rapidement.
 
 ## Mise à jour firmware (OTA), en HTTP local — pas de MQTT
@@ -117,11 +132,12 @@ device dans l'onglet Firmware pour tester le relais de bout en bout.
 ## Tester le contrat MQTT sans matériel
 
 Avec le broker Mosquitto du projet démarré (`docker compose up -d mosquitto`),
-simuler un appareil avec `mosquitto_pub` :
+simuler un appareil avec `mosquitto_pub` (un topic par mesure, retain=true) :
 
 ```bash
-mosquitto_pub -h localhost -p 1883 -t arrosage/test-device/etat -m \
-  '{"ts":"2026-07-16T10:00:00Z","water_level_cm":34.5,"humidity_pct":62.1,"temperature_c":21.3,"battery_v":0.0,"vanne_1":"open","vanne_2":"closed","vanne_3":"closed"}'
+mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/water_level_cm -m '{"value":34.5}'
+mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/temperature_c -m '{"value":21.3}'
+mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/vanne_1 -m '{"state":"open"}'
 ```
 
 Et écouter les commandes envoyées par le dashboard (simule ce que ferait le

@@ -65,20 +65,25 @@ Le firmware réel vit dans un repo séparé (`arrosage_fw`, ESP-IDF/FreeRTOS).
 Voir [`esp32/README.md`](esp32/README.md) pour le contrat complet et à jour
 (état, commande, OTA). Résumé rapide :
 
-- État (device → serveur) : `arrosage/<device_id>/etat`, retain=true, toutes
-  les clés toujours présentes (`water_level_cm`, `humidity_pct`,
-  `temperature_c`, `battery_v`, `vanne_1..N`).
+- État (device → serveur) : un topic **par mesure/vanne**
+  `arrosage/<device_id>/etat/<key>`, retain=true, publié seulement quand une
+  donnée fraîche existe (pas de cycle périodique, pas de valeur bidon).
+  Payload capteur `{"value": 34.5}`, payload vanne `{"state": "open"}`.
+  L'absence de message pour une clé ne veut pas dire "en panne", juste "rien
+  de neuf" — le backend s'abonne avec le wildcard `arrosage/+/etat/#`.
 - Commande (serveur → device) : `arrosage/<device_id>/commande`, jamais
   retain, `{"vanne": "vanne_1", "action": "open", "duration_s": 600}` /
-  `{"vanne": "vanne_1", "action": "close"}` / `{"action": "stop_all"}`.
+  `{"vanne": "vanne_1", "action": "close"}` / `{"action": "stop_all"}` /
+  `{"action": "get_status"}` (demande une resynchronisation complète, utilisé
+  par le backend à son démarrage).
 - OTA (serveur → device, HTTP local, pas MQTT) : `POST http://<ip>/api/ota`
   avec le `.bin` brut — voir onglet **Firmware** du dashboard plus bas.
 
 Test rapide sans matériel :
 
 ```bash
-mosquitto_pub -h localhost -p 1883 -t arrosage/test-device/etat -m \
-  '{"ts":"2026-07-16T10:00:00Z","water_level_cm":34.5,"humidity_pct":62.1,"temperature_c":21.3,"battery_v":0.0,"vanne_1":"open","vanne_2":"closed","vanne_3":"closed"}'
+mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/water_level_cm -m '{"value":34.5}'
+mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/vanne_1 -m '{"state":"open"}'
 ```
 
 ## Base de données
