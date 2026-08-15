@@ -29,12 +29,23 @@ def _format_last_seen(ts: pd.Timestamp) -> str:
 _DURATION_OPTIONS = [{"label": f"{m} min" if m < 60 else "1 h", "value": m} for m in config.VALVE_DURATION_OPTIONS_MIN]
 
 
+def _build_valve_badge(is_open):
+    return dbc.Badge(
+        "OUVERTE" if is_open else "FERMÉE",
+        color="success" if is_open else "secondary",
+        className="mt-1 mb-1 d-block",
+    )
+
+
+def _build_valve_countdown(device_id, metric, is_open):
+    remaining = valve_timers.get_remaining_seconds(device_id, metric) if is_open else None
+    return f"Ferme dans {valve_timers.format_remaining(remaining)}" if remaining is not None else ""
+
+
 def _build_valve_chip(row):
     is_open = row["value"] >= 0.5
     device_id = row["device_id"]
     metric = row["metric"]
-
-    remaining = valve_timers.get_remaining_seconds(device_id, metric) if is_open else None
 
     return dbc.Col(
         dbc.Card(
@@ -42,15 +53,18 @@ def _build_valve_chip(row):
                 [
                     html.Div(metric, className="fw-bold small"),
                     html.Div(device_id, className="text-muted small"),
-                    dbc.Badge(
-                        "OUVERTE" if is_open else "FERMÉE",
-                        color="success" if is_open else "secondary",
-                        className="mt-1 mb-1 d-block",
+                    # Contenu de ces deux divs géré par update_valve_badges
+                    # (rafraîchi toutes les 2s) : la structure ci-dessous
+                    # (menu déroulant, boutons) n'est reconstruite que par
+                    # update_valve_panel, beaucoup moins souvent, pour ne
+                    # jamais perdre un clic pendant un rafraîchissement.
+                    html.Div(
+                        _build_valve_badge(is_open),
+                        id={"type": "valve-badge-wrap", "device": device_id, "metric": metric},
                     ),
                     html.Div(
-                        f"Ferme dans {valve_timers.format_remaining(remaining)}"
-                        if remaining is not None
-                        else "",
+                        _build_valve_countdown(device_id, metric, is_open),
+                        id={"type": "valve-countdown-wrap", "device": device_id, "metric": metric},
                         className="text-muted small mb-1",
                         style={"minHeight": "1.1em"},
                     ),
@@ -329,14 +343,43 @@ def register_callbacks(app):
             message, color="success" if ok else "danger", dismissable=True, duration=6000, className="py-2"
         )
 
-    @app.callback(Output("valve-panel", "children"), Input("global-interval", "n_intervals"))
-    def update_valve_panel(_n):
+    @app.callback(
+        Output("valve-panel", "children"),
+        Input("tabs", "active_tab"),
+        Input("valve-structure-interval", "n_intervals"),
+    )
+    def update_valve_panel(_active_tab, _n):
         valves = queries.get_valve_states()
         if valves.empty:
             return dbc.Alert(
                 "Aucune vanne détectée pour le moment.", color="secondary", className="mb-0 py-2"
             )
         return dbc.Row([_build_valve_chip(row) for _, row in valves.iterrows()], className="g-2")
+
+    @app.callback(
+        Output({"type": "valve-badge-wrap", "device": ALL, "metric": ALL}, "children"),
+        Output({"type": "valve-countdown-wrap", "device": ALL, "metric": ALL}, "children"),
+        Input("global-interval", "n_intervals"),
+    )
+    def update_valve_badges(_n):
+        valves = queries.get_valve_states()
+        state_by_key = {(row["device_id"], row["metric"]): row["value"] for _, row in valves.iterrows()}
+
+        badge_ids = [o["id"] for o in ctx.outputs_list[0]] if ctx.outputs_list[0] else []
+        countdown_ids = [o["id"] for o in ctx.outputs_list[1]] if ctx.outputs_list[1] else []
+
+        badges = []
+        for oid in badge_ids:
+            value = state_by_key.get((oid["device"], oid["metric"]))
+            badges.append(_build_valve_badge(value is not None and value >= 0.5))
+
+        countdowns = []
+        for oid in countdown_ids:
+            value = state_by_key.get((oid["device"], oid["metric"]))
+            is_open = value is not None and value >= 0.5
+            countdowns.append(_build_valve_countdown(oid["device"], oid["metric"], is_open))
+
+        return badges, countdowns
 
     @app.callback(Output("tank-gauge", "children"), Input("global-interval", "n_intervals"))
     def update_tank_gauge(_n):
