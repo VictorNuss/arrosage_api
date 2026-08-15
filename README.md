@@ -42,6 +42,23 @@ approche :
   installées dans l'image via `uv sync --locked`. Pour ajouter une dépendance
   en développement : `cd <service> && uv add <paquet>` puis rebuild l'image.
 
+## Tests
+
+Chaque service a sa propre suite `pytest` (dépendance de dev, jamais
+installée dans les images de prod grâce à `uv sync --no-dev`) :
+
+```bash
+cd ingest && uv run pytest -q     # parsing/coercion du contrat MQTT état
+cd dashboard && uv run pytest -q  # commandes vannes, cache live, OTA, météo
+cd weather && uv run pytest -q    # extraction des séries Open-Meteo
+```
+
+Ce sont des tests unitaires (pas besoin de Docker/base/broker) : les accès
+réseau (`requests`, client MQTT) sont mockés. Ils couvrent surtout la
+logique qui a déjà produit de vraies régressions pendant le développement —
+dédoublonnage AROME/ARPEGE, format du contrat de commande, coercion des
+valeurs de vannes — pour éviter de les réintroduire.
+
 ## Contrat device (MQTT + OTA)
 
 Le firmware réel vit dans un repo séparé (`arrosage_fw`, ESP-IDF/FreeRTOS).
