@@ -1,7 +1,15 @@
-"""Cache mémoire des derniers messages d'état MQTT (arrosage/<device_id>/etat),
-mis à jour instantanément à la réception plutôt que d'attendre le prochain
-cycle d'écriture en base par le service ingest (~2s de batching) puis le
-prochain poll du dashboard (~15s auparavant).
+"""Cache mémoire des derniers messages d'état MQTT
+(arrosage/<device_id>/etat/<key>), mis à jour instantanément à la réception
+plutôt que d'attendre le prochain cycle d'écriture en base par le service
+ingest (~2s de batching) puis le prochain poll du dashboard.
+
+Contrat (un topic par mesure/vanne, voir esp32/README.md) :
+  - capteur : {"value": 34.5}
+  - vanne   : {"state": "open"} / {"state": "closed"}
+Pas de champ "ts" : l'horodatage de réception MQTT fait foi. L'absence d'un
+message pour une clé ne veut pas dire "capteur en panne", juste "rien de
+neuf depuis la dernière valeur connue" (le broker republie la dernière
+valeur retenue à la (re)connexion).
 
 Le dashboard s'abonne au broker en parallèle de `ingest` : ce sont deux
 abonnés indépendants du même topic, l'un n'affecte pas l'autre. Ce cache ne
@@ -23,7 +31,8 @@ from . import config
 
 log = logging.getLogger("dashboard.live_state")
 
-TOPIC = "arrosage/+/etat"
+TOPIC = "arrosage/+/etat/#"
+VALVE_METRIC_HINT = "vanne"
 
 _TRUTHY = {"open", "on", "true", "1", "ouvert", "ouverte"}
 _FALSY = {"closed", "off", "false", "0", "ferme", "fermee", "fermé", "fermée"}
@@ -44,6 +53,10 @@ _client = None
 _start_lock = threading.Lock()
 
 
+def _is_valve_metric(metric):
+    return VALVE_METRIC_HINT in metric.lower()
+
+
 def _infer_unit(metric):
     for suffix, unit in _UNIT_SUFFIXES.items():
         if metric.endswith(suffix):
@@ -51,26 +64,32 @@ def _infer_unit(metric):
     return None
 
 
-def _coerce_value(raw_value):
+def _coerce_valve_state(raw_value):
     if isinstance(raw_value, bool):
         return 1.0 if raw_value else 0.0
-    if isinstance(raw_value, (int, float)):
-        return float(raw_value)
     if isinstance(raw_value, str):
         normalized = raw_value.strip().lower()
         if normalized in _TRUTHY:
             return 1.0
         if normalized in _FALSY:
             return 0.0
-        return float(normalized)
-    raise ValueError(f"type non supporté: {type(raw_value)}")
+    raise ValueError(f"état de vanne non reconnu: {raw_value!r}")
+
+
+def _coerce_sensor_value(raw_value):
+    if isinstance(raw_value, bool):
+        raise ValueError(f"valeur non numérique: {raw_value!r}")
+    if isinstance(raw_value, (int, float)):
+        return float(raw_value)
+    raise ValueError(f"valeur non numérique: {raw_value!r}")
 
 
 def _parse_topic(topic):
+    """arrosage/<device_id>/etat/<key> -> (device_id, key), ou None."""
     parts = topic.split("/")
-    if len(parts) != 3 or parts[0] != "arrosage" or parts[2] != "etat":
+    if len(parts) != 4 or parts[0] != "arrosage" or parts[2] != "etat":
         return None
-    return parts[1]
+    return parts[1], parts[3]
 
 
 def _on_connect(client, userdata, flags, reason_code, properties=None):
@@ -79,9 +98,11 @@ def _on_connect(client, userdata, flags, reason_code, properties=None):
 
 
 def _on_message(client, userdata, message):
-    device_id = _parse_topic(message.topic)
-    if device_id is None:
+    parsed = _parse_topic(message.topic)
+    if parsed is None:
         return
+    device_id, metric = parsed
+
     try:
         data = json.loads(message.payload.decode("utf-8"))
     except Exception:
@@ -90,21 +111,26 @@ def _on_message(client, userdata, message):
     if not isinstance(data, dict):
         return
 
-    now = datetime.now(timezone.utc)
+    try:
+        if _is_valve_metric(metric):
+            if "state" not in data:
+                raise ValueError("champ 'state' manquant")
+            value = _coerce_valve_state(data["state"])
+        else:
+            if "value" not in data:
+                raise ValueError("champ 'value' manquant")
+            value = _coerce_sensor_value(data["value"])
+    except Exception as exc:
+        log.warning("Cache live: payload invalide sur %s (%s)", message.topic, exc)
+        return
+
     with _lock:
-        for metric, raw_value in data.items():
-            if metric == "ts":
-                continue
-            try:
-                value = _coerce_value(raw_value)
-            except Exception:
-                continue
-            _latest[(device_id, metric)] = {
-                "value": value,
-                "unit": _infer_unit(metric),
-                "time": now,
-            }
-    log.info("Cache live: mis à jour pour %s (%s champs)", device_id, len(data))
+        _latest[(device_id, metric)] = {
+            "value": value,
+            "unit": _infer_unit(metric),
+            "time": datetime.now(timezone.utc),
+        }
+    log.info("Cache live: mis à jour %s/%s", device_id, metric)
 
 
 def get_latest_readings() -> list[dict]:
