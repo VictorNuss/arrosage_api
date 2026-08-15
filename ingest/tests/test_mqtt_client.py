@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -5,105 +6,108 @@ import pytest
 from app import mqtt_client
 
 
-# --- parse_topic ----------------------------------------------------------
+# --- parse_topic ------------------------------------------------------------
 
-def test_parse_topic_extracts_device_id():
-    assert mqtt_client.parse_topic("arrosage/jardin-1/etat") == "jardin-1"
+def test_parse_topic_extracts_device_id_and_key():
+    assert mqtt_client.parse_topic("arrosage/jardin-1/etat/temperature_c") == ("jardin-1", "temperature_c")
+    assert mqtt_client.parse_topic("arrosage/jardin-1/etat/vanne_1") == ("jardin-1", "vanne_1")
 
 
 @pytest.mark.parametrize(
     "topic",
-    ["arrosage/jardin-1/commande", "autre/jardin-1/etat", "arrosage/etat", "arrosage/jardin-1/etat/extra"],
+    [
+        "arrosage/jardin-1/etat",  # ancien contrat (JSON combiné), plus supporté
+        "arrosage/jardin-1/commande",
+        "autre/jardin-1/etat/temperature_c",
+        "arrosage/etat/temperature_c",
+        "arrosage/jardin-1/etat/temperature_c/extra",
+    ],
 )
 def test_parse_topic_rejects_unexpected_shapes(topic):
     assert mqtt_client.parse_topic(topic) is None
 
 
-# --- _infer_unit -----------------------------------------------------------
+# --- is_valve_metric ----------------------------------------------------------
+
+@pytest.mark.parametrize("metric", ["vanne_1", "vanne_arrosage_potager", "VANNE_2"])
+def test_is_valve_metric_true_for_valve_names(metric):
+    assert mqtt_client.is_valve_metric(metric) is True
+
+
+@pytest.mark.parametrize("metric", ["water_level_cm", "temperature_c", "battery_v"])
+def test_is_valve_metric_false_for_sensor_names(metric):
+    assert mqtt_client.is_valve_metric(metric) is False
+
+
+# --- _infer_unit ---------------------------------------------------------------
 
 @pytest.mark.parametrize(
     "metric,expected_unit",
-    [
-        ("water_level_cm", "cm"),
-        ("rain_mm", "mm"),
-        ("humidity_pct", "%"),
-        ("temperature_c", "°C"),
-        ("battery_v", "V"),
-        ("vanne_1", None),
-    ],
+    [("water_level_cm", "cm"), ("humidity_pct", "%"), ("temperature_c", "°C"), ("battery_v", "V"), ("vanne_1", None)],
 )
 def test_infer_unit_from_suffix(metric, expected_unit):
     assert mqtt_client._infer_unit(metric) == expected_unit
 
 
-# --- _coerce_value -----------------------------------------------------------
+# --- parse_payload : capteur (champ "value") -----------------------------------
 
-@pytest.mark.parametrize(
-    "raw_value,expected",
-    [
-        (True, 1.0),
-        (False, 0.0),
-        (21.3, 21.3),
-        (5, 5.0),
-        ("open", 1.0),
-        ("closed", 0.0),
-        ("ouvert", 1.0),
-        ("fermee", 0.0),
-        ("1", 1.0),
-        ("34.5", 34.5),
-    ],
-)
-def test_coerce_value_normalizes_known_shapes(raw_value, expected):
-    assert mqtt_client._coerce_value("vanne_1", raw_value) == expected
+def test_parse_payload_sensor_reads_value_field():
+    rows = mqtt_client.parse_payload("jardin-1", "temperature_c", b'{"value": 21.3}')
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["device_id"] == "jardin-1"
+    assert row["metric"] == "temperature_c"
+    assert row["value"] == 21.3
+    assert row["unit"] == "°C"
 
 
-def test_coerce_value_rejects_unparseable_string():
-    with pytest.raises(ValueError):
-        mqtt_client._coerce_value("temperature_c", "pas-un-nombre")
-
-
-def test_coerce_value_rejects_unsupported_type():
-    with pytest.raises(ValueError):
-        mqtt_client._coerce_value("temperature_c", {"nested": "object"})
-
-
-# --- parse_payload ------------------------------------------------------------
-
-def test_parse_payload_flattens_every_field_into_a_row():
-    payload = b'{"water_level_cm": 34.5, "vanne_1": "open"}'
-    rows = mqtt_client.parse_payload("jardin-1", payload)
-
-    by_metric = {r["metric"]: r for r in rows}
-    assert by_metric["water_level_cm"]["value"] == 34.5
-    assert by_metric["water_level_cm"]["unit"] == "cm"
-    assert by_metric["vanne_1"]["value"] == 1.0
-    assert all(r["device_id"] == "jardin-1" for r in rows)
-
-
-def test_parse_payload_uses_explicit_ts_when_present():
-    payload = b'{"ts": "2026-07-16T10:00:00Z", "temperature_c": 21.3}'
-    rows = mqtt_client.parse_payload("jardin-1", payload)
-    assert rows[0]["time"] == datetime(2026, 7, 16, 10, 0, 0, tzinfo=timezone.utc)
-
-
-def test_parse_payload_uses_now_when_ts_is_absent():
+def test_parse_payload_sensor_uses_reception_time_not_a_ts_field():
+    """Le nouveau contrat n'a pas de champ ts : un ts fourni est ignoré, seul
+    l'horodatage de réception fait foi."""
     before = datetime.now(timezone.utc)
-    rows = mqtt_client.parse_payload("jardin-1", b'{"temperature_c": 21.3}')
+    rows = mqtt_client.parse_payload("jardin-1", "temperature_c", b'{"value": 21.3, "ts": "2020-01-01T00:00:00Z"}')
     assert rows[0]["time"] >= before
 
 
-def test_parse_payload_never_emits_ts_as_a_metric():
-    rows = mqtt_client.parse_payload("jardin-1", b'{"ts": "2026-07-16T10:00:00Z", "temperature_c": 21.3}')
-    assert all(r["metric"] != "ts" for r in rows)
+def test_parse_payload_sensor_missing_value_field_raises():
+    with pytest.raises(ValueError):
+        mqtt_client.parse_payload("jardin-1", "temperature_c", b"{}")
 
 
-def test_parse_payload_skips_bad_metric_but_keeps_the_rest():
-    """Régression : un seul champ invalide ne doit pas faire perdre tout le message."""
-    rows = mqtt_client.parse_payload("jardin-1", b'{"temperature_c": "n/a", "vanne_1": "open"}')
-    metrics = {r["metric"] for r in rows}
-    assert metrics == {"vanne_1"}
+def test_parse_payload_sensor_non_numeric_value_raises():
+    with pytest.raises(ValueError):
+        mqtt_client.parse_payload("jardin-1", "temperature_c", b'{"value": "n/a"}')
+
+
+def test_parse_payload_sensor_boolean_value_raises():
+    """bool est une sous-classe d'int en Python : à exclure explicitement."""
+    with pytest.raises(ValueError):
+        mqtt_client.parse_payload("jardin-1", "temperature_c", b'{"value": true}')
+
+
+# --- parse_payload : vanne (champ "state") -------------------------------------
+
+@pytest.mark.parametrize(
+    "state_raw,expected_value",
+    [("open", 1.0), ("closed", 0.0), ("on", 1.0), ("off", 0.0), ("ouvert", 1.0)],
+)
+def test_parse_payload_valve_reads_state_field(state_raw, expected_value):
+    payload = json.dumps({"state": state_raw}).encode("utf-8")
+    rows = mqtt_client.parse_payload("jardin-1", "vanne_1", payload)
+    assert rows[0]["value"] == expected_value
+    assert rows[0]["unit"] is None
+
+
+def test_parse_payload_valve_missing_state_field_raises():
+    with pytest.raises(ValueError):
+        mqtt_client.parse_payload("jardin-1", "vanne_1", b'{"value": 1}')
+
+
+def test_parse_payload_valve_unrecognized_state_raises():
+    with pytest.raises(ValueError):
+        mqtt_client.parse_payload("jardin-1", "vanne_1", b'{"state": "maybe"}')
 
 
 def test_parse_payload_rejects_non_object_json():
     with pytest.raises(ValueError):
-        mqtt_client.parse_payload("jardin-1", b"[1, 2, 3]")
+        mqtt_client.parse_payload("jardin-1", "temperature_c", b"[1, 2, 3]")
