@@ -1,0 +1,18 @@
+[project]
+name = "arrosage-scheduler"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "paho-mqtt==2.1.0",
+    "SQLAlchemy==2.0.36",
+    "psycopg[binary]==3.2.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-mock>=3.15.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
