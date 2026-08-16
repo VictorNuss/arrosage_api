@@ -140,6 +140,155 @@ def build_firmware_tab():
     )
 
 
+_DAY_OPTIONS = [
+    {"label": "Lun", "value": 1},
+    {"label": "Mar", "value": 2},
+    {"label": "Mer", "value": 3},
+    {"label": "Jeu", "value": 4},
+    {"label": "Ven", "value": 5},
+    {"label": "Sam", "value": 6},
+    {"label": "Dim", "value": 7},
+]
+
+
+def build_programs_tab():
+    return html.Div(
+        [
+            dcc.Store(id="program-editing-id"),
+            dcc.Store(id="programs-version", data=0),
+            html.Div(id="programs-feedback"),
+            dbc.Button("+ Nouveau programme", id="new-program-btn", color="primary", className="mb-3", n_clicks=0),
+            html.Div(id="programs-list"),
+            dbc.Modal(
+                [
+                    dbc.ModalHeader(id="program-modal-title"),
+                    dbc.ModalBody(
+                        [
+                            dbc.Label("Nom"),
+                            dbc.Input(id="program-form-name", placeholder="Ex: Potager matin"),
+                            dbc.Label("Jours", className="mt-3"),
+                            dbc.Checklist(id="program-form-days", options=_DAY_OPTIONS, inline=True),
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        [
+                                            dbc.Label("Heure de déclenchement"),
+                                            dbc.Input(id="program-form-start-time", type="time", value="06:30"),
+                                        ],
+                                        md=6,
+                                    ),
+                                    dbc.Col(
+                                        [
+                                            dbc.Label("Durée (min)"),
+                                            dbc.Input(
+                                                id="program-form-duration", type="number", min=1, value=10
+                                            ),
+                                        ],
+                                        md=6,
+                                    ),
+                                ],
+                                className="mt-3 g-3",
+                            ),
+                            dbc.Label("Vannes", className="mt-3"),
+                            dcc.Dropdown(id="program-form-valves", multi=True),
+                            html.Hr(),
+                            html.Div("Conditions", className="fw-bold mb-2"),
+                            dbc.Switch(
+                                id="program-form-cond-rain-enabled",
+                                label="Ne pas arroser s'il pleut prochainement",
+                                value=True,
+                            ),
+                            dbc.Row(
+                                dbc.Col(
+                                    [
+                                        dbc.Label("Fenêtre (h)", size="sm"),
+                                        dbc.Input(
+                                            id="program-form-cond-rain-hours",
+                                            type="number",
+                                            min=1,
+                                            value=3,
+                                            size="sm",
+                                        ),
+                                    ],
+                                    md=4,
+                                ),
+                                className="mb-2",
+                            ),
+                            dbc.Switch(
+                                id="program-form-cond-midday-enabled",
+                                label="Éviter une plage horaire",
+                                value=True,
+                            ),
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        [
+                                            dbc.Label("Début", size="sm"),
+                                            dbc.Input(
+                                                id="program-form-cond-midday-start",
+                                                type="time",
+                                                value="10:00",
+                                                size="sm",
+                                            ),
+                                        ],
+                                        md=6,
+                                    ),
+                                    dbc.Col(
+                                        [
+                                            dbc.Label("Fin", size="sm"),
+                                            dbc.Input(
+                                                id="program-form-cond-midday-end",
+                                                type="time",
+                                                value="18:00",
+                                                size="sm",
+                                            ),
+                                        ],
+                                        md=6,
+                                    ),
+                                ],
+                                className="mb-2",
+                            ),
+                            dbc.Switch(
+                                id="program-form-cond-tank-enabled",
+                                label="Ne pas arroser si la cuve est sous",
+                                value=True,
+                            ),
+                            dbc.Row(
+                                dbc.Col(
+                                    [
+                                        dbc.Label("Seuil (%)", size="sm"),
+                                        dbc.Input(
+                                            id="program-form-cond-tank-pct",
+                                            type="number",
+                                            min=0,
+                                            max=100,
+                                            value=10,
+                                            size="sm",
+                                        ),
+                                    ],
+                                    md=4,
+                                ),
+                            ),
+                        ]
+                    ),
+                    dbc.ModalFooter(
+                        [
+                            dbc.Button("Annuler", id="program-cancel-btn", color="secondary"),
+                            dbc.Button("Enregistrer", id="program-save-btn", color="primary"),
+                        ]
+                    ),
+                ],
+                id="program-modal",
+                is_open=False,
+                size="lg",
+            ),
+            html.H5("Historique récent", className="pt-4"),
+            html.Div(id="watering-runs-history"),
+        ],
+        className="pt-3",
+    )
+
+
 def build_layout():
     return dbc.Container(
         [
@@ -151,6 +300,7 @@ def build_layout():
                     dbc.Tab(build_history_tab(), label="Historique", tab_id="history"),
                     dbc.Tab(build_weather_tab(), label="Météo", tab_id="weather"),
                     dbc.Tab(build_firmware_tab(), label="Firmware", tab_id="firmware"),
+                    dbc.Tab(build_programs_tab(), label="Programmes", tab_id="programs"),
                 ],
                 id="tabs",
                 active_tab="overview",

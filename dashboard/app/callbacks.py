@@ -1,9 +1,10 @@
 import base64
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as time_type, timedelta, timezone
 
 import pandas as pd
 import plotly.graph_objects as go
 from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
+from dash.exceptions import PreventUpdate
 from plotly.subplots import make_subplots
 import dash_bootstrap_components as dbc
 
@@ -294,6 +295,107 @@ def _build_firmware_row(device_row):
         ),
         className="mb-3",
     )
+
+
+_DAY_LABELS = {1: "Lun", 2: "Mar", 3: "Mer", 4: "Jeu", 5: "Ven", 6: "Sam", 7: "Dim"}
+
+
+def _format_days(days_of_week):
+    days_sorted = sorted(days_of_week or [])
+    if days_sorted == list(range(1, 8)):
+        return "Tous les jours"
+    return ", ".join(_DAY_LABELS.get(d, "?") for d in days_sorted)
+
+
+def _format_conditions_summary(conditions_list):
+    labels = []
+    for condition in conditions_list or []:
+        condition_type = condition.get("type")
+        if condition_type == "no_rain_forecast":
+            labels.append(f"pas de pluie ({condition.get('window_hours', 3)}h)")
+        elif condition_type == "avoid_time_window":
+            labels.append(f"jamais {condition.get('start')}–{condition.get('end')}")
+        elif condition_type == "min_tank_pct":
+            labels.append(f"cuve ≥ {condition.get('min_pct')}%")
+    return labels
+
+
+def _valve_option_value(device_id, metric):
+    return f"{device_id}::{metric}"
+
+
+def _build_valve_options():
+    return [
+        {"label": f"{v['metric']} ({v['device_id']})", "value": _valve_option_value(v["device_id"], v["metric"])}
+        for v in queries.get_known_valves()
+    ]
+
+
+def _build_program_card(program):
+    program_id = program["id"]
+    valve_labels = (
+        ", ".join(f"{v['metric']} ({v['device_id']})" for v in program["valves"]) or "aucune vanne sélectionnée"
+    )
+    condition_badges = [
+        dbc.Badge(label, color="info", className="me-1")
+        for label in _format_conditions_summary(program["conditions"])
+    ]
+    duration_min = program["default_duration_s"] // 60
+    schedule_summary = f"{_format_days(program['days_of_week'])} à {program['start_time'].strftime('%H:%M')} — {duration_min} min"
+
+    return dbc.Card(
+        dbc.CardBody(
+            dbc.Row(
+                [
+                    dbc.Col(
+                        [
+                            html.Div(program["name"], className="fw-bold"),
+                            html.Div(schedule_summary, className="small text-muted"),
+                            html.Div(valve_labels, className="small"),
+                            html.Div(condition_badges, className="mt-1"),
+                        ],
+                        md=8,
+                    ),
+                    dbc.Col(
+                        [
+                            dbc.Switch(
+                                id={"type": "program-enabled-toggle", "program_id": program_id},
+                                value=program["enabled"],
+                                label="Actif",
+                                className="mb-2",
+                            ),
+                            dbc.ButtonGroup(
+                                [
+                                    dbc.Button(
+                                        "Modifier",
+                                        id={"type": "program-edit-btn", "program_id": program_id},
+                                        size="sm",
+                                        color="secondary",
+                                    ),
+                                    dbc.Button(
+                                        "Supprimer",
+                                        id={"type": "program-delete-btn", "program_id": program_id},
+                                        size="sm",
+                                        color="danger",
+                                        outline=True,
+                                    ),
+                                ]
+                            ),
+                        ],
+                        md=4,
+                        className="text-md-end",
+                    ),
+                ]
+            )
+        ),
+        className="mb-2",
+    )
+
+
+def _format_valves_triggered(valves_triggered):
+    if not valves_triggered:
+        return ""
+    return ", ".join(f"{v['metric']} ({v['duration_s'] // 60}min)" for v in valves_triggered)
 
 
 def register_callbacks(app):
@@ -647,3 +749,266 @@ def register_callbacks(app):
             duration=10000,
         )
         return alert, False, False
+
+    @app.callback(
+        Output("program-modal", "is_open", allow_duplicate=True),
+        Output("program-modal-title", "children"),
+        Output("program-editing-id", "data"),
+        Output("program-form-name", "value"),
+        Output("program-form-days", "value"),
+        Output("program-form-start-time", "value"),
+        Output("program-form-duration", "value"),
+        Output("program-form-valves", "value"),
+        Output("program-form-valves", "options"),
+        Output("program-form-cond-rain-enabled", "value"),
+        Output("program-form-cond-rain-hours", "value"),
+        Output("program-form-cond-midday-enabled", "value"),
+        Output("program-form-cond-midday-start", "value"),
+        Output("program-form-cond-midday-end", "value"),
+        Output("program-form-cond-tank-enabled", "value"),
+        Output("program-form-cond-tank-pct", "value"),
+        Input("new-program-btn", "n_clicks"),
+        Input({"type": "program-edit-btn", "program_id": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def open_program_modal(_new_clicks, _edit_clicks):
+        if not ctx.triggered or not ctx.triggered[0]["value"]:
+            raise PreventUpdate
+
+        valve_options = _build_valve_options()
+        triggered_id = ctx.triggered_id
+
+        if triggered_id == "new-program-btn":
+            return (
+                True,
+                "Nouveau programme",
+                None,
+                "",
+                [1, 2, 3, 4, 5, 6, 7],
+                "06:30",
+                10,
+                [],
+                valve_options,
+                True,
+                3,
+                True,
+                "10:00",
+                "18:00",
+                True,
+                10,
+            )
+
+        program = queries.get_program(triggered_id["program_id"])
+        if program is None:
+            raise PreventUpdate
+
+        conditions_by_type = {c["type"]: c for c in (program["conditions"] or [])}
+        rain = conditions_by_type.get("no_rain_forecast")
+        midday = conditions_by_type.get("avoid_time_window")
+        tank = conditions_by_type.get("min_tank_pct")
+        valve_values = [_valve_option_value(v["device_id"], v["metric"]) for v in program["valves"]]
+
+        return (
+            True,
+            f"Modifier « {program['name']} »",
+            program["id"],
+            program["name"],
+            program["days_of_week"],
+            program["start_time"].strftime("%H:%M"),
+            program["default_duration_s"] // 60,
+            valve_values,
+            valve_options,
+            rain is not None,
+            rain.get("window_hours", 3) if rain else 3,
+            midday is not None,
+            midday.get("start", "10:00") if midday else "10:00",
+            midday.get("end", "18:00") if midday else "18:00",
+            tank is not None,
+            tank.get("min_pct", 10) if tank else 10,
+        )
+
+    @app.callback(
+        Output("program-modal", "is_open", allow_duplicate=True),
+        Input("program-cancel-btn", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def cancel_program_modal(_n):
+        return False
+
+    @app.callback(
+        Output("program-modal", "is_open", allow_duplicate=True),
+        Output("programs-version", "data", allow_duplicate=True),
+        Output("programs-feedback", "children", allow_duplicate=True),
+        Input("program-save-btn", "n_clicks"),
+        State("program-editing-id", "data"),
+        State("program-form-name", "value"),
+        State("program-form-days", "value"),
+        State("program-form-start-time", "value"),
+        State("program-form-duration", "value"),
+        State("program-form-valves", "value"),
+        State("program-form-cond-rain-enabled", "value"),
+        State("program-form-cond-rain-hours", "value"),
+        State("program-form-cond-midday-enabled", "value"),
+        State("program-form-cond-midday-start", "value"),
+        State("program-form-cond-midday-end", "value"),
+        State("program-form-cond-tank-enabled", "value"),
+        State("program-form-cond-tank-pct", "value"),
+        State("programs-version", "data"),
+        prevent_initial_call=True,
+    )
+    def save_program(
+        n_clicks,
+        program_id,
+        name,
+        days,
+        start_time_str,
+        duration_min,
+        valve_values,
+        rain_enabled,
+        rain_hours,
+        midday_enabled,
+        midday_start,
+        midday_end,
+        tank_enabled,
+        tank_pct,
+        version,
+    ):
+        if not n_clicks:
+            raise PreventUpdate
+
+        errors = []
+        if not name or not name.strip():
+            errors.append("le nom est obligatoire")
+        if not days:
+            errors.append("sélectionnez au moins un jour")
+        if not valve_values:
+            errors.append("sélectionnez au moins une vanne")
+        if not start_time_str:
+            errors.append("l'heure de déclenchement est obligatoire")
+        if not duration_min or duration_min <= 0:
+            errors.append("la durée doit être positive")
+
+        if errors:
+            return (
+                no_update,
+                no_update,
+                dbc.Alert("Erreur : " + ", ".join(errors), color="danger", dismissable=True),
+            )
+
+        conditions_list = []
+        if rain_enabled:
+            conditions_list.append(
+                {"type": "no_rain_forecast", "window_hours": int(rain_hours or 3), "threshold_mm": 0.2}
+            )
+        if midday_enabled:
+            conditions_list.append({"type": "avoid_time_window", "start": midday_start, "end": midday_end})
+        if tank_enabled:
+            conditions_list.append({"type": "min_tank_pct", "min_pct": int(tank_pct or 0)})
+
+        valves = [tuple(v.split("::", 1)) for v in valve_values]
+        hour, minute = (int(part) for part in start_time_str.split(":")[:2])
+
+        existing_enabled = True
+        if program_id is not None:
+            existing = queries.get_program(program_id)
+            if existing is not None:
+                existing_enabled = existing["enabled"]
+
+        queries.save_program(
+            program_id=program_id,
+            name=name.strip(),
+            enabled=existing_enabled,
+            start_time=time_type(hour, minute),
+            days_of_week=[int(d) for d in days],
+            default_duration_s=int(duration_min) * 60,
+            conditions_list=conditions_list,
+            valves=valves,
+        )
+
+        return (
+            False,
+            (version or 0) + 1,
+            dbc.Alert("Programme enregistré.", color="success", dismissable=True, duration=4000),
+        )
+
+    @app.callback(
+        Output("programs-version", "data", allow_duplicate=True),
+        Input({"type": "program-enabled-toggle", "program_id": ALL}, "value"),
+        State("programs-version", "data"),
+        prevent_initial_call=True,
+    )
+    def toggle_program_enabled(_values, version):
+        triggered_id = ctx.triggered_id
+        if not triggered_id or not ctx.triggered:
+            raise PreventUpdate
+        queries.set_program_enabled(triggered_id["program_id"], bool(ctx.triggered[0]["value"]))
+        return (version or 0) + 1
+
+    @app.callback(
+        Output("programs-version", "data", allow_duplicate=True),
+        Output("programs-feedback", "children", allow_duplicate=True),
+        Input({"type": "program-delete-btn", "program_id": ALL}, "n_clicks"),
+        State("programs-version", "data"),
+        prevent_initial_call=True,
+    )
+    def delete_program(_clicks, version):
+        triggered_id = ctx.triggered_id
+        if not triggered_id or not ctx.triggered or not ctx.triggered[0]["value"]:
+            raise PreventUpdate
+        queries.delete_program(triggered_id["program_id"])
+        return (version or 0) + 1, dbc.Alert(
+            "Programme supprimé.", color="secondary", dismissable=True, duration=4000
+        )
+
+    @app.callback(
+        Output("programs-list", "children"),
+        Input("tabs", "active_tab"),
+        Input("programs-version", "data"),
+    )
+    def update_programs_list(active_tab, _version):
+        if active_tab != "programs":
+            return no_update
+        programs = queries.get_programs()
+        if not programs:
+            return dbc.Alert("Aucun programme pour l'instant.", color="secondary")
+        return [_build_program_card(program) for program in programs]
+
+    @app.callback(
+        Output("watering-runs-history", "children"),
+        Input("tabs", "active_tab"),
+        Input("programs-version", "data"),
+        Input("global-interval", "n_intervals"),
+    )
+    def update_runs_history(active_tab, _version, _n):
+        if active_tab != "programs":
+            return no_update
+        runs = queries.get_recent_runs(limit=20)
+        if runs.empty:
+            return dbc.Alert("Aucune exécution pour l'instant.", color="secondary")
+
+        rows = []
+        for _, run in runs.iterrows():
+            executed = run["status"] == "executed"
+            status_badge = dbc.Badge(
+                "Exécuté" if executed else "Ignoré", color="success" if executed else "secondary"
+            )
+            detail = _format_valves_triggered(run["valves_triggered"]) if executed else (run["skip_reason"] or "")
+            rows.append(
+                html.Tr(
+                    [
+                        html.Td(run["scheduled_for"].strftime("%d/%m %H:%M")),
+                        html.Td(run["program_name"]),
+                        html.Td(status_badge),
+                        html.Td(detail),
+                    ]
+                )
+            )
+
+        return dbc.Table(
+            [
+                html.Thead(html.Tr([html.Th("Prévu"), html.Th("Programme"), html.Th("Statut"), html.Th("Détail")])),
+                html.Tbody(rows),
+            ],
+            size="sm",
+            hover=True,
+        )
