@@ -56,17 +56,6 @@ def test_no_rain_forecast_uses_default_params_when_missing():
     assert ok is False
 
 
-# --- evaluate_avoid_time_window --------------------------------------------------
-
-@pytest.mark.parametrize("hour,expected_ok", [(9, True), (10, False), (14, False), (17, False), (18, True), (20, True)])
-def test_avoid_time_window_blocks_inside_range(hour, expected_ok):
-    now = NOW.replace(hour=hour, minute=0)
-    ok, reason = conditions.evaluate_avoid_time_window(now, {"start": "10:00", "end": "18:00"})
-    assert ok is expected_ok
-    if not expected_ok:
-        assert "heure interdite" in reason
-
-
 # --- evaluate_min_tank_pct --------------------------------------------------------
 
 def test_min_tank_pct_fails_when_below_threshold():

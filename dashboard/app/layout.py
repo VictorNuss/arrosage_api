@@ -164,6 +164,7 @@ def build_programs_tab():
                     dbc.ModalHeader(id="program-modal-title"),
                     dbc.ModalBody(
                         [
+                            html.Div(id="program-form-error"),
                             dbc.Label("Nom"),
                             dbc.Input(id="program-form-name", placeholder="Ex: Potager matin"),
                             dbc.Label("Jours", className="mt-3"),
@@ -212,40 +213,6 @@ def build_programs_tab():
                                     ],
                                     md=4,
                                 ),
-                                className="mb-2",
-                            ),
-                            dbc.Switch(
-                                id="program-form-cond-midday-enabled",
-                                label="Éviter une plage horaire",
-                                value=True,
-                            ),
-                            dbc.Row(
-                                [
-                                    dbc.Col(
-                                        [
-                                            dbc.Label("Début", size="sm"),
-                                            dbc.Input(
-                                                id="program-form-cond-midday-start",
-                                                type="time",
-                                                value="10:00",
-                                                size="sm",
-                                            ),
-                                        ],
-                                        md=6,
-                                    ),
-                                    dbc.Col(
-                                        [
-                                            dbc.Label("Fin", size="sm"),
-                                            dbc.Input(
-                                                id="program-form-cond-midday-end",
-                                                type="time",
-                                                value="18:00",
-                                                size="sm",
-                                            ),
-                                        ],
-                                        md=6,
-                                    ),
-                                ],
                                 className="mb-2",
                             ),
                             dbc.Switch(

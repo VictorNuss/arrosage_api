@@ -313,8 +313,6 @@ def _format_conditions_summary(conditions_list):
         condition_type = condition.get("type")
         if condition_type == "no_rain_forecast":
             labels.append(f"pas de pluie ({condition.get('window_hours', 3)}h)")
-        elif condition_type == "avoid_time_window":
-            labels.append(f"jamais {condition.get('start')}–{condition.get('end')}")
         elif condition_type == "min_tank_pct":
             labels.append(f"cuve ≥ {condition.get('min_pct')}%")
     return labels
@@ -762,11 +760,9 @@ def register_callbacks(app):
         Output("program-form-valves", "options"),
         Output("program-form-cond-rain-enabled", "value"),
         Output("program-form-cond-rain-hours", "value"),
-        Output("program-form-cond-midday-enabled", "value"),
-        Output("program-form-cond-midday-start", "value"),
-        Output("program-form-cond-midday-end", "value"),
         Output("program-form-cond-tank-enabled", "value"),
         Output("program-form-cond-tank-pct", "value"),
+        Output("program-form-error", "children", allow_duplicate=True),
         Input("new-program-btn", "n_clicks"),
         Input({"type": "program-edit-btn", "program_id": ALL}, "n_clicks"),
         prevent_initial_call=True,
@@ -776,6 +772,16 @@ def register_callbacks(app):
             raise PreventUpdate
 
         valve_options = _build_valve_options()
+        no_valves_warning = (
+            dbc.Alert(
+                "Aucune vanne détectée pour l'instant : elle doit avoir déjà envoyé son état "
+                "au moins une fois (sur arrosage/<device>/etat/<vanne>) pour apparaître ici.",
+                color="warning",
+                className="mb-3",
+            )
+            if not valve_options
+            else None
+        )
         triggered_id = ctx.triggered_id
 
         if triggered_id == "new-program-btn":
@@ -792,10 +798,8 @@ def register_callbacks(app):
                 True,
                 3,
                 True,
-                "10:00",
-                "18:00",
-                True,
                 10,
+                no_valves_warning,
             )
 
         program = queries.get_program(triggered_id["program_id"])
@@ -804,7 +808,6 @@ def register_callbacks(app):
 
         conditions_by_type = {c["type"]: c for c in (program["conditions"] or [])}
         rain = conditions_by_type.get("no_rain_forecast")
-        midday = conditions_by_type.get("avoid_time_window")
         tank = conditions_by_type.get("min_tank_pct")
         valve_values = [_valve_option_value(v["device_id"], v["metric"]) for v in program["valves"]]
 
@@ -820,11 +823,9 @@ def register_callbacks(app):
             valve_options,
             rain is not None,
             rain.get("window_hours", 3) if rain else 3,
-            midday is not None,
-            midday.get("start", "10:00") if midday else "10:00",
-            midday.get("end", "18:00") if midday else "18:00",
             tank is not None,
             tank.get("min_pct", 10) if tank else 10,
+            no_valves_warning,
         )
 
     @app.callback(
@@ -839,6 +840,7 @@ def register_callbacks(app):
         Output("program-modal", "is_open", allow_duplicate=True),
         Output("programs-version", "data", allow_duplicate=True),
         Output("programs-feedback", "children", allow_duplicate=True),
+        Output("program-form-error", "children", allow_duplicate=True),
         Input("program-save-btn", "n_clicks"),
         State("program-editing-id", "data"),
         State("program-form-name", "value"),
@@ -848,9 +850,6 @@ def register_callbacks(app):
         State("program-form-valves", "value"),
         State("program-form-cond-rain-enabled", "value"),
         State("program-form-cond-rain-hours", "value"),
-        State("program-form-cond-midday-enabled", "value"),
-        State("program-form-cond-midday-start", "value"),
-        State("program-form-cond-midday-end", "value"),
         State("program-form-cond-tank-enabled", "value"),
         State("program-form-cond-tank-pct", "value"),
         State("programs-version", "data"),
@@ -866,9 +865,6 @@ def register_callbacks(app):
         valve_values,
         rain_enabled,
         rain_hours,
-        midday_enabled,
-        midday_start,
-        midday_end,
         tank_enabled,
         tank_pct,
         version,
@@ -889,10 +885,15 @@ def register_callbacks(app):
             errors.append("la durée doit être positive")
 
         if errors:
+            # A l'intérieur de la modale (pas dans programs-feedback, qui est
+            # caché derrière tant que la modale reste ouverte) : régression
+            # trouvée en test, l'erreur était invisible et "Enregistrer"
+            # semblait ne rien faire.
             return (
                 no_update,
                 no_update,
-                dbc.Alert("Erreur : " + ", ".join(errors), color="danger", dismissable=True),
+                no_update,
+                dbc.Alert("Erreur : " + ", ".join(errors), color="danger", dismissable=True, className="mb-3"),
             )
 
         conditions_list = []
@@ -900,8 +901,6 @@ def register_callbacks(app):
             conditions_list.append(
                 {"type": "no_rain_forecast", "window_hours": int(rain_hours or 3), "threshold_mm": 0.2}
             )
-        if midday_enabled:
-            conditions_list.append({"type": "avoid_time_window", "start": midday_start, "end": midday_end})
         if tank_enabled:
             conditions_list.append({"type": "min_tank_pct", "min_pct": int(tank_pct or 0)})
 
@@ -929,6 +928,7 @@ def register_callbacks(app):
             False,
             (version or 0) + 1,
             dbc.Alert("Programme enregistré.", color="success", dismissable=True, duration=4000),
+            None,
         )
 
     @app.callback(

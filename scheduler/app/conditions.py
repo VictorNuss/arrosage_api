@@ -5,17 +5,12 @@ nécessaires (prévisions de pluie, niveau de cuve, heure courante) sont
 passées en paramètre plutôt que récupérées ici.
 """
 
-from datetime import time as time_type, timedelta
+from datetime import timedelta
 
 # AROME et ARPEGE se chevauchent sur les échéances proches : on préfère
 # AROME (plus fin) pour ne pas compter la même pluie deux fois. Même
 # convention que dashboard/app/queries.py::get_rain_outlook.
 _AROME_SOURCE = "AROME"
-
-
-def _parse_hhmm(value: str) -> time_type:
-    hour, minute = value.split(":")
-    return time_type(int(hour), int(minute))
 
 
 def sum_rain_forecast_mm(rain_rows, now, window_hours):
@@ -43,16 +38,6 @@ def evaluate_no_rain_forecast(rain_rows, now, params):
     return True, None
 
 
-def evaluate_avoid_time_window(now, params):
-    start = _parse_hhmm(params["start"])
-    end = _parse_hhmm(params["end"])
-    current = now.time()
-    in_window = (start <= current < end) if start < end else (current >= start or current < end)
-    if in_window:
-        return False, f"heure interdite ({current.strftime('%H:%M')} dans la plage {params['start']}-{params['end']})"
-    return True, None
-
-
 def evaluate_min_tank_pct(tank_value_cm, tank_height_full_cm, params):
     min_pct = params.get("min_pct", 0)
     if tank_value_cm is None:
@@ -67,7 +52,6 @@ def evaluate_min_tank_pct(tank_value_cm, tank_height_full_cm, params):
 
 _EVALUATORS = {
     "no_rain_forecast": lambda condition, ctx: evaluate_no_rain_forecast(ctx["rain_rows"], ctx["now"], condition),
-    "avoid_time_window": lambda condition, ctx: evaluate_avoid_time_window(ctx["now"], condition),
     "min_tank_pct": lambda condition, ctx: evaluate_min_tank_pct(
         ctx["tank_value_cm"], ctx["tank_height_full_cm"], condition
     ),

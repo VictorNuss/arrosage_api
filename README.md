@@ -213,12 +213,13 @@ migration) :
 - `no_rain_forecast` (`window_hours`, `threshold_mm`) : n'arrose pas si le
   cumul de pluie prévu (Open-Meteo, même logique de dédup AROME/ARPEGE que
   l'indicateur du dashboard) dépasse le seuil dans la fenêtre donnée.
-- `avoid_time_window` (`start`, `end`) : n'arrose jamais dans cette plage
-  horaire (ex: éviter la pleine journée), indépendamment de l'heure de
-  déclenchement du programme.
 - `min_tank_pct` (`min_pct`) : n'arrose pas si le niveau de la cuve est sous
   ce seuil. **Si aucune lecture de niveau n'est encore connue, le programme
   est bloqué par sécurité** plutôt que de supposer la cuve pleine.
+
+Pas de condition "éviter une plage horaire" : l'heure de déclenchement du
+programme suffit à choisir quand il tourne, une condition séparée pour ça
+était redondante.
 
 ### Historique et anti-doublon
 
