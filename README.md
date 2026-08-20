@@ -70,9 +70,11 @@ Voir [`esp32/README.md`](esp32/README.md) pour le contrat complet et à jour
 - État (device → serveur) : un topic **par mesure/vanne**
   `arrosage/<device_id>/etat/<key>`, retain=true, publié seulement quand une
   donnée fraîche existe (pas de cycle périodique, pas de valeur bidon).
-  Payload capteur `{"value": 34.5}`, payload vanne `{"state": "open"}`.
-  L'absence de message pour une clé ne veut pas dire "en panne", juste "rien
-  de neuf" — le backend s'abonne avec le wildcard `arrosage/+/etat/#`.
+  Payload capteur `{"value": 34.5}`, payload vanne `{"state": "open"}` (une
+  vanne a 3 états possibles : `"open"`/`"closed"`/`"transition"` — elle met
+  ~15s à s'ouvrir/se fermer, voir plus bas). L'absence de message pour une
+  clé ne veut pas dire "en panne", juste "rien de neuf" — le backend
+  s'abonne avec le wildcard `arrosage/+/etat/#`.
 - Commande (serveur → device) : `arrosage/<device_id>/commande`, jamais
   retain, `{"vanne": "vanne_1", "action": "open", "duration_s": 600}` /
   `{"vanne": "vanne_1", "action": "close"}` / `{"action": "stop_all"}` /
@@ -166,6 +168,12 @@ vannes") ; c'est le firmware qui gère le minuteur d'auto-fermeture en local
 l'état réel rapporté par l'ESP32 (`.../etat`), pas la commande envoyée — en
 cas de défaut matériel, badge et commande peuvent diverger, ce qui est
 volontaire (on voit l'état réel, pas ce qu'on a demandé).
+
+Pendant la transition (~15s), le badge affiche "OUVERTURE…"/"FERMETURE…"
+(orange) — le sens est déduit du dernier état stable connu avant la
+transition, purement indicatif — et les boutons Ouvrir/Fermer de cette
+vanne sont désactivés le temps que la transition se termine, pour éviter
+d'envoyer une commande contradictoire pendant qu'elle bouge déjà.
 
 Puis cinq onglets :
 

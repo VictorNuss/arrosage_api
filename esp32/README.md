@@ -34,6 +34,12 @@ Payload vanne :
 ```json
 {"state": "open"}
 ```
+Une vanne met ~15s à s'ouvrir/se fermer : pendant ce délai, publier un 3e
+état plutôt que de laisser le dashboard croire qu'elle est encore dans son
+état précédent :
+```json
+{"state": "transition"}
+```
 
 Règles :
 - Pas de champ `ts` : le backend utilise l'horodatage de réception MQTT.
@@ -42,7 +48,17 @@ Règles :
   connue". Le `retain` du broker redonne la dernière valeur connue à un
   abonné qui (re)démarre ou se reconnecte.
 - Les métriques de vannes contiennent `vanne` dans leur nom, valeur
-  `"open"`/`"closed"` (chaînes) dans le champ `state`.
+  `"open"`/`"closed"`/`"transition"` (chaînes) dans le champ `state` (aussi
+  acceptés en synonymes : `"on"`/`"off"`, `"moving"`, `"opening"`,
+  `"closing"` — ces deux derniers sont traités comme une simple transition,
+  le backend ne s'appuie pas dessus pour connaître le sens : voir plus bas).
+- Le backend ne connaît pas le sens de la transition à partir du seul
+  champ `state` (`"transition"` ne le précise pas) : le dashboard déduit
+  "ouverture"/"fermeture" à partir du dernier état stable connu avant la
+  transition. C'est purement indicatif pour l'affichage ; si le firmware
+  peut publier directement `"opening"`/`"closing"` plutôt qu'un `"transition"`
+  générique, c'est plus fiable et le backend les reconnaît déjà tous les
+  deux.
 - Suffixes de nom reconnus par le dashboard pour l'unité affichée : `_cm`,
   `_mm`, `_pct`, `_c` (°C), `_v` (V).
 - Le backend s'abonne avec le wildcard `arrosage/+/etat/#` (un seul niveau
