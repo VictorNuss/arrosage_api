@@ -46,6 +46,7 @@ log = logging.getLogger("dashboard.live_state")
 
 TOPIC = "arrosage/+/etat/#"
 VALVE_METRIC_HINT = "vanne"
+IP_METRIC_KEY = "ip"
 
 _TRUTHY = {"open", "on", "true", "1", "ouvert", "ouverte"}
 _FALSY = {"closed", "off", "false", "0", "ferme", "fermee", "fermé", "fermée"}
@@ -138,6 +139,13 @@ def _on_message(client, userdata, message):
     if parsed is None:
         return
     device_id, metric = parsed
+
+    if metric == IP_METRIC_KEY:
+        # L'IP du device alimente devices.ip_address (via ingest), pas ce
+        # cache : ce n'est pas une "lecture" au sens capteur/vanne, et sa
+        # valeur (chaîne) ne correspondrait à aucune des deux coercions
+        # ci-dessous.
+        return
 
     try:
         data = json.loads(message.payload.decode("utf-8"))

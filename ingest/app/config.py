@@ -7,6 +7,14 @@ MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD") or None
 MQTT_TOPIC = "arrosage/+/etat/#"
 VALVE_METRIC_HINT = "vanne"
 
+# Clé publiée par chaque device (à sa connexion MQTT et en réponse à un
+# get_status) pour faire connaître son IP locale fixe : arrosage/<device_id>
+# /etat/ip, {"value": "192.168.1.50"}. Contrairement aux autres clés, la
+# valeur est une chaîne, pas un nombre : elle alimente devices.ip_address
+# (utilisée pour cibler l'OTA), pas sensor_readings (qui ne stocke que des
+# float).
+IP_METRIC_KEY = "ip"
+
 POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "timescaledb")
 POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", "5432"))
 POSTGRES_USER = os.environ.get("POSTGRES_USER", "arrosage")

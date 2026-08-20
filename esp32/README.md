@@ -80,6 +80,27 @@ Règles :
   après `etat` est attendu, mais `#` reste plus tolérant que `+` si jamais
   ça évolue).
 
+### Clé spéciale `ip`
+
+Topic `arrosage/<device_id>/etat/ip`, payload `{"value": "192.168.1.50"}`.
+Contrairement aux autres clés, la valeur est une **chaîne** (l'IP locale
+fixe du device, pas de DHCP — configurée à la fabrication/au flashage), pas
+un nombre : elle alimente `devices.ip_address` côté base, pas
+`sensor_readings`. Utilisée pour cibler automatiquement le bon device lors
+d'une mise à jour OTA (voir plus bas), sans mapping tenu à la main dans le
+dashboard.
+
+Règles :
+- Publiée par le device **automatiquement à chaque (re)connexion MQTT**,
+  et en réponse à un `get_status` — mêmes règles que les autres clés côté
+  fraîcheur (retain=true, rien publié tant que l'IP réelle n'est pas
+  connue, pas de valeur par défaut).
+- Cette IP étant fixe, elle ne change en principe jamais pour un
+  `device_id` donné une fois connue — mais rien ne garantit qu'elle soit
+  déjà connue (device jamais vu depuis que le backend écoute) : le
+  dashboard grise le bouton de mise à jour OTA tant qu'elle est absente,
+  et permet de forcer un `get_status` pour redemander sa republication.
+
 ## Commande des vannes (serveur → device)
 
 Topic : `arrosage/<device_id>/commande`, QoS 1, **jamais retain**.

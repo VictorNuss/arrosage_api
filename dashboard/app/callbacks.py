@@ -276,57 +276,71 @@ def _build_device_card(device_row, readings_for_device: pd.DataFrame):
 def _build_firmware_row(device_row):
     device_id = device_row["device_id"]
     ip_address = device_row.get("ip_address") or ""
-    return dbc.Card(
-        dbc.CardBody(
+    ip_known = bool(ip_address)
+    children = [
+        html.Div(device_row.get("name") or device_id, className="fw-bold mb-2"),
+        dbc.Row(
             [
-                html.Div(device_row.get("name") or device_id, className="fw-bold mb-2"),
-                dbc.Row(
-                    [
-                        dbc.Col(
-                            dbc.InputGroup(
-                                [
-                                    dbc.InputGroupText("IP"),
-                                    dbc.Input(
-                                        id={"type": "device-ip-input", "device": device_id},
-                                        value=ip_address,
-                                        placeholder="192.168.1.50",
-                                    ),
-                                    dbc.Button(
-                                        "Enregistrer",
-                                        id={"type": "device-ip-save-btn", "device": device_id},
-                                        color="secondary",
-                                        n_clicks=0,
-                                    ),
-                                ]
+                dbc.Col(
+                    dbc.InputGroup(
+                        [
+                            dbc.InputGroupText("IP"),
+                            dbc.Input(
+                                id={"type": "device-ip-input", "device": device_id},
+                                value=ip_address,
+                                placeholder="192.168.1.50",
                             ),
-                            md=4,
-                        ),
-                        dbc.Col(
-                            dcc.Upload(
-                                id={"type": "ota-upload", "device": device_id},
-                                children=html.Div("Glisser un .bin ou cliquer pour choisir", className="small"),
-                                accept=".bin",
-                                className="border rounded p-2 text-center",
-                            ),
-                            md=5,
-                        ),
-                        dbc.Col(
                             dbc.Button(
-                                "Envoyer",
-                                id={"type": "ota-send-btn", "device": device_id},
-                                color="warning",
+                                "Enregistrer",
+                                id={"type": "device-ip-save-btn", "device": device_id},
+                                color="secondary",
                                 n_clicks=0,
-                                className="w-100",
                             ),
-                            md=3,
-                        ),
-                    ],
-                    className="g-2 align-items-center",
+                            dbc.Button(
+                                "🔄",
+                                id={"type": "device-ip-refresh-btn", "device": device_id},
+                                color="secondary",
+                                outline=True,
+                                n_clicks=0,
+                                title="Demander au device de republier son IP (get_status)",
+                            ),
+                        ]
+                    ),
+                    md=4,
                 ),
-            ]
+                dbc.Col(
+                    dcc.Upload(
+                        id={"type": "ota-upload", "device": device_id},
+                        children=html.Div("Glisser un .bin ou cliquer pour choisir", className="small"),
+                        accept=".bin",
+                        className="border rounded p-2 text-center",
+                    ),
+                    md=5,
+                ),
+                dbc.Col(
+                    dbc.Button(
+                        "Envoyer",
+                        id={"type": "ota-send-btn", "device": device_id},
+                        color="warning",
+                        n_clicks=0,
+                        className="w-100",
+                        disabled=not ip_known,
+                    ),
+                    md=3,
+                ),
+            ],
+            className="g-2 align-items-center",
         ),
-        className="mb-3",
-    )
+    ]
+    if not ip_known:
+        children.append(
+            dbc.FormText(
+                "IP inconnue pour ce device : cliquez 🔄 pour lui demander de republier son IP "
+                "(get_status), ou saisissez-la manuellement puis Enregistrer.",
+                className="d-block mt-2",
+            )
+        )
+    return dbc.Card(dbc.CardBody(children), className="mb-3")
 
 
 _DAY_LABELS = {1: "Lun", 2: "Mar", 3: "Mer", 4: "Jeu", 5: "Ven", 6: "Sam", 7: "Dim"}
@@ -689,6 +703,25 @@ def register_callbacks(app):
         queries.set_device_ip(device_id, ip_value)
         return dbc.Alert(
             f"IP enregistrée pour {device_id} : {ip_value}", color="success", dismissable=True, duration=4000
+        )
+
+    @app.callback(
+        Output("ota-feedback", "children", allow_duplicate=True),
+        Input({"type": "device-ip-refresh-btn", "device": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def refresh_device_ip(_clicks):
+        triggered_id = ctx.triggered_id
+        if not triggered_id or not ctx.triggered or not ctx.triggered[0]["value"]:
+            return no_update
+
+        device_id = triggered_id["device"]
+        mqtt_control.send_get_status(device_id)
+        return dbc.Alert(
+            f"Demande envoyée à {device_id} : son IP réapparaîtra ici sous peu (revenez sur cet onglet).",
+            color="info",
+            dismissable=True,
+            duration=6000,
         )
 
     @app.callback(

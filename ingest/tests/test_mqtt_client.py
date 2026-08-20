@@ -113,6 +113,45 @@ def test_parse_payload_valve_missing_state_field_raises():
         mqtt_client.parse_payload("jardin-1", "vanne_1", b'{"value": 1}')
 
 
+# --- is_valid_ipv4 / parse_ip_payload ("ip", clé publiée à chaque connexion) --
+
+@pytest.mark.parametrize("value", ["192.168.1.50", "0.0.0.0", "255.255.255.255", "10.0.0.1"])
+def test_is_valid_ipv4_accepts_well_formed_addresses(value):
+    assert mqtt_client.is_valid_ipv4(value) is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "256.1.1.1",  # octet hors plage
+        "192.168.1",  # pas assez de segments
+        "192.168.1.1.5",  # trop de segments
+        "not-an-ip",
+        "",
+        None,
+        192,
+    ],
+)
+def test_is_valid_ipv4_rejects_malformed_values(value):
+    assert mqtt_client.is_valid_ipv4(value) is False
+
+
+def test_parse_ip_payload_extracts_the_address():
+    payload = json.dumps({"value": "192.168.1.50"}).encode("utf-8")
+    assert mqtt_client.parse_ip_payload(payload) == "192.168.1.50"
+
+
+def test_parse_ip_payload_rejects_invalid_address():
+    payload = json.dumps({"value": "not-an-ip"}).encode("utf-8")
+    with pytest.raises(ValueError):
+        mqtt_client.parse_ip_payload(payload)
+
+
+def test_parse_ip_payload_missing_value_field_raises():
+    with pytest.raises(ValueError):
+        mqtt_client.parse_ip_payload(b'{"unexpected": 1}')
+
+
 def test_parse_payload_valve_unrecognized_state_raises():
     with pytest.raises(ValueError):
         mqtt_client.parse_payload("jardin-1", "vanne_1", b'{"state": "maybe"}')
