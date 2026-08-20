@@ -98,6 +98,15 @@ def test_parse_payload_valve_reads_state_field(state_raw, expected_value):
     assert rows[0]["unit"] is None
 
 
+@pytest.mark.parametrize("state_raw", ["transition", "moving", "opening", "closing"])
+def test_parse_payload_valve_reads_transition_state(state_raw):
+    """La vanne met ~15s à s'ouvrir/se fermer : le firmware peut publier un
+    état intermédiaire pendant la transition."""
+    payload = json.dumps({"state": state_raw}).encode("utf-8")
+    rows = mqtt_client.parse_payload("jardin-1", "vanne_1", payload)
+    assert rows[0]["value"] == 0.5
+
+
 def test_parse_payload_valve_missing_state_field_raises():
     with pytest.raises(ValueError):
         mqtt_client.parse_payload("jardin-1", "vanne_1", b'{"value": 1}')

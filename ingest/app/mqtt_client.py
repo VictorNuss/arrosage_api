@@ -29,13 +29,15 @@ def _infer_unit(metric):
 
 def _coerce_valve_state(raw_value):
     if isinstance(raw_value, bool):
-        return 1.0 if raw_value else 0.0
+        return config.VALVE_OPEN_VALUE if raw_value else config.VALVE_CLOSED_VALUE
     if isinstance(raw_value, str):
         normalized = raw_value.strip().lower()
         if normalized in config.TRUTHY_STRINGS:
-            return 1.0
+            return config.VALVE_OPEN_VALUE
         if normalized in config.FALSY_STRINGS:
-            return 0.0
+            return config.VALVE_CLOSED_VALUE
+        if normalized in config.TRANSITION_STRINGS:
+            return config.VALVE_TRANSITION_VALUE
     raise ValueError(f"état de vanne non reconnu: {raw_value!r}")
 
 
