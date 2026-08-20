@@ -44,6 +44,13 @@ def ensure_device(engine, device_id):
         conn.execute(stmt)
 
 
+def update_device_ip(engine, device_id, ip_address):
+    with engine.begin() as conn:
+        conn.execute(
+            devices.update().where(devices.c.device_id == device_id).values(ip_address=ip_address)
+        )
+
+
 def insert_readings(engine, rows):
     """rows: liste de dicts (time, device_id, metric, value, unit)."""
     if not rows:

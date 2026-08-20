@@ -1,10 +1,13 @@
 import json
 import logging
+import re
 from datetime import datetime, timezone
 
 from . import config
 
 log = logging.getLogger("ingest.parser")
+
+_IPV4_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
 
 _UNIT_SUFFIXES = {
     "_cm": "cm",
@@ -39,6 +42,28 @@ def _coerce_valve_state(raw_value):
         if normalized in config.TRANSITION_STRINGS:
             return config.VALVE_TRANSITION_VALUE
     raise ValueError(f"état de vanne non reconnu: {raw_value!r}")
+
+
+def is_valid_ipv4(value) -> bool:
+    if not isinstance(value, str) or not _IPV4_RE.match(value):
+        return False
+    return all(0 <= int(octet) <= 255 for octet in value.split("."))
+
+
+def parse_ip_payload(payload_bytes) -> str:
+    """Clé 'ip' (arrosage/<device_id>/etat/ip) : {"value": "192.168.1.50"}.
+
+    Contrairement aux autres clés, la valeur est une chaîne (adresse IPv4
+    fixe du device), pas un nombre : elle alimente devices.ip_address, pas
+    sensor_readings (colonne float non nullable).
+    """
+    data = json.loads(payload_bytes.decode("utf-8"))
+    if not isinstance(data, dict) or "value" not in data:
+        raise ValueError("champ 'value' manquant pour la clé 'ip'")
+    raw_value = data["value"]
+    if not is_valid_ipv4(raw_value):
+        raise ValueError(f"adresse IP invalide: {raw_value!r}")
+    return raw_value
 
 
 def parse_topic(topic):

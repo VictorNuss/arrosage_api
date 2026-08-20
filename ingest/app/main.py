@@ -7,13 +7,14 @@ import time
 import paho.mqtt.client as mqtt
 
 from . import config, db
-from .mqtt_client import parse_payload, parse_topic
+from .mqtt_client import parse_ip_payload, parse_payload, parse_topic
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("ingest.main")
 
 FLUSH_INTERVAL_SECONDS = 2.0
 _pending_rows = queue.Queue()
+_pending_ip_updates = queue.Queue()
 
 
 def _request_resync(client, engine):
@@ -45,6 +46,16 @@ def _on_message(client, userdata, message):
         log.warning("Topic inattendu ignoré: %s", message.topic)
         return
     device_id, metric = parsed_topic
+
+    if metric == config.IP_METRIC_KEY:
+        try:
+            ip_address = parse_ip_payload(message.payload)
+        except Exception:
+            log.exception("Payload IP invalide sur %s, message ignoré", message.topic)
+            return
+        _pending_ip_updates.put((device_id, ip_address))
+        return
+
     try:
         rows = parse_payload(device_id, metric, message.payload)
     except Exception:
@@ -68,7 +79,15 @@ def _flush_loop(engine):
         except queue.Empty:
             pass
 
-        if not batch:
+        ip_updates = {}
+        try:
+            while True:
+                device_id, ip_address = _pending_ip_updates.get_nowait()
+                ip_updates[device_id] = ip_address  # ne garde que la plus récente du lot
+        except queue.Empty:
+            pass
+
+        if not batch and not ip_updates:
             continue
 
         try:
@@ -77,12 +96,17 @@ def _flush_loop(engine):
             # process ne redémarre (nettoyage manuel, restauration DB...), un
             # cache aurait fait échouer l'insert suivant sur une violation de
             # clé étrangère.
-            for device_id in devices_in_batch:
+            for device_id in devices_in_batch | set(ip_updates):
                 db.ensure_device(engine, device_id)
-            db.insert_readings(engine, batch)
-            log.info("Insertion de %s mesures (%s appareils)", len(batch), len(devices_in_batch))
+            if batch:
+                db.insert_readings(engine, batch)
+                log.info("Insertion de %s mesures (%s appareils)", len(batch), len(devices_in_batch))
+            for device_id, ip_address in ip_updates.items():
+                db.update_device_ip(engine, device_id, ip_address)
+            if ip_updates:
+                log.info("IP mise à jour pour %s device(s)", len(ip_updates))
         except Exception:
-            log.exception("Échec de l'insertion d'un lot de %s mesures, lot perdu", len(batch))
+            log.exception("Échec de l'insertion d'un lot (%s mesures, %s IP), lot perdu", len(batch), len(ip_updates))
 
 
 def main():
