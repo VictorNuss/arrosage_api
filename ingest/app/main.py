@@ -1,3 +1,4 @@
+import json
 import logging
 import queue
 import threading
@@ -15,18 +16,37 @@ FLUSH_INTERVAL_SECONDS = 2.0
 _pending_rows = queue.Queue()
 
 
+def _request_resync(client, engine):
+    """Demande à chaque device déjà connu de republier son état complet
+    connu (vannes + dernière valeur de chaque capteur déjà lu au moins une
+    fois) : filet de sécurité en plus des messages retenus par le broker,
+    utile si le broker a perdu ses messages retenus (volume réinitialisé...).
+    """
+    try:
+        device_ids = db.get_known_device_ids(engine)
+    except Exception:
+        log.exception("Impossible de lister les devices connus pour la resynchronisation")
+        return
+    for device_id in device_ids:
+        client.publish(f"arrosage/{device_id}/commande", json.dumps({"action": "get_status"}), qos=1, retain=False)
+    if device_ids:
+        log.info("Resynchronisation (get_status) demandée à %s device(s)", len(device_ids))
+
+
 def _on_connect(client, userdata, flags, reason_code, properties=None):
     log.info("Connecté au broker MQTT, abonnement à %s", config.MQTT_TOPIC)
     client.subscribe(config.MQTT_TOPIC, qos=1)
+    _request_resync(client, userdata)
 
 
 def _on_message(client, userdata, message):
-    device_id = parse_topic(message.topic)
-    if device_id is None:
+    parsed_topic = parse_topic(message.topic)
+    if parsed_topic is None:
         log.warning("Topic inattendu ignoré: %s", message.topic)
         return
+    device_id, metric = parsed_topic
     try:
-        rows = parse_payload(device_id, message.payload)
+        rows = parse_payload(device_id, metric, message.payload)
     except Exception:
         log.exception("Payload invalide sur %s, message ignoré", message.topic)
         return
@@ -71,7 +91,7 @@ def main():
     flush_thread = threading.Thread(target=_flush_loop, args=(engine,), daemon=True)
     flush_thread.start()
 
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, userdata=engine)
     if config.MQTT_USERNAME:
         client.username_pw_set(config.MQTT_USERNAME, config.MQTT_PASSWORD)
     client.on_connect = _on_connect

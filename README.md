@@ -15,6 +15,7 @@ prévisions Météo-France (modèle AROME) et la pluviométrie passée.
 | `ingest`      | Abonné MQTT → écrit les mesures en base                          |
 | `dashboard`   | Application Dash (port 8050) : vue d'ensemble, historique, météo |
 | `weather`     | Récupère prévisions AROME/ARPEGE et pluvio passée (DPClim)       |
+| `scheduler`   | Programmes d'arrosage automatiques (planning + conditions)       |
 
 ## Démarrage
 
@@ -42,26 +43,51 @@ approche :
   installées dans l'image via `uv sync --locked`. Pour ajouter une dépendance
   en développement : `cd <service> && uv add <paquet>` puis rebuild l'image.
 
+## Tests
+
+Chaque service a sa propre suite `pytest` (dépendance de dev, jamais
+installée dans les images de prod grâce à `uv sync --no-dev`) :
+
+```bash
+cd ingest && uv run pytest -q     # parsing/coercion du contrat MQTT état
+cd dashboard && uv run pytest -q  # commandes vannes, cache live, OTA, météo, programmes
+cd weather && uv run pytest -q    # extraction des séries Open-Meteo
+cd scheduler && uv run pytest -q  # évaluation des conditions, déclenchement des programmes
+```
+
+Ce sont des tests unitaires (pas besoin de Docker/base/broker) : les accès
+réseau (`requests`, client MQTT) sont mockés. Ils couvrent surtout la
+logique qui a déjà produit de vraies régressions pendant le développement —
+dédoublonnage AROME/ARPEGE, format du contrat de commande, coercion des
+valeurs de vannes — pour éviter de les réintroduire.
+
 ## Contrat device (MQTT + OTA)
 
 Le firmware réel vit dans un repo séparé (`arrosage_fw`, ESP-IDF/FreeRTOS).
 Voir [`esp32/README.md`](esp32/README.md) pour le contrat complet et à jour
 (état, commande, OTA). Résumé rapide :
 
-- État (device → serveur) : `arrosage/<device_id>/etat`, retain=true, toutes
-  les clés toujours présentes (`water_level_cm`, `humidity_pct`,
-  `temperature_c`, `battery_v`, `vanne_1..N`).
+- État (device → serveur) : un topic **par mesure/vanne**
+  `arrosage/<device_id>/etat/<key>`, retain=true, publié seulement quand une
+  donnée fraîche existe (pas de cycle périodique, pas de valeur bidon).
+  Payload capteur `{"value": 34.5}`, payload vanne `{"state": "open"}` (une
+  vanne a 3 états possibles : `"open"`/`"closed"`/`"transition"` — elle met
+  ~15s à s'ouvrir/se fermer, voir plus bas). L'absence de message pour une
+  clé ne veut pas dire "en panne", juste "rien de neuf" — le backend
+  s'abonne avec le wildcard `arrosage/+/etat/#`.
 - Commande (serveur → device) : `arrosage/<device_id>/commande`, jamais
   retain, `{"vanne": "vanne_1", "action": "open", "duration_s": 600}` /
-  `{"vanne": "vanne_1", "action": "close"}` / `{"action": "stop_all"}`.
+  `{"vanne": "vanne_1", "action": "close"}` / `{"action": "stop_all"}` /
+  `{"action": "get_status"}` (demande une resynchronisation complète, utilisé
+  par le backend à son démarrage).
 - OTA (serveur → device, HTTP local, pas MQTT) : `POST http://<ip>/api/ota`
   avec le `.bin` brut — voir onglet **Firmware** du dashboard plus bas.
 
 Test rapide sans matériel :
 
 ```bash
-mosquitto_pub -h localhost -p 1883 -t arrosage/test-device/etat -m \
-  '{"ts":"2026-07-16T10:00:00Z","water_level_cm":34.5,"humidity_pct":62.1,"temperature_c":21.3,"battery_v":0.0,"vanne_1":"open","vanne_2":"closed","vanne_3":"closed"}'
+mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/water_level_cm -m '{"value":34.5}'
+mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/vanne_1 -m '{"state":"open"}'
 ```
 
 ## Base de données
@@ -80,7 +106,10 @@ psql -U arrosage -d arrosage -f - < db/init/00N_fichier.sql`). Il crée :
   (`sensor_readings_hourly`) utilisé par le dashboard pour les longues
   périodes,
 - `weather_observed` : hypertable des observations passées (pluvio/température),
-- `weather_forecast` : table classique (pas un historique) — voir plus bas.
+- `weather_forecast` : table classique (pas un historique) — voir plus bas,
+- `watering_programs` / `watering_program_valves` : programmes d'arrosage
+  (planning, conditions, vannes concernées) — voir plus bas,
+- `watering_runs` : historique des exécutions (exécuté/ignoré + raison).
 
 Pour ajouter un nom lisible ou des coordonnées à un appareil :
 
@@ -140,7 +169,13 @@ l'état réel rapporté par l'ESP32 (`.../etat`), pas la commande envoyée — e
 cas de défaut matériel, badge et commande peuvent diverger, ce qui est
 volontaire (on voit l'état réel, pas ce qu'on a demandé).
 
-Puis quatre onglets :
+Pendant la transition (~15s), le badge affiche "OUVERTURE…"/"FERMETURE…"
+(orange) — le sens est déduit du dernier état stable connu avant la
+transition, purement indicatif — et les boutons Ouvrir/Fermer de cette
+vanne sont désactivés le temps que la transition se termine, pour éviter
+d'envoyer une commande contradictoire pendant qu'elle bouge déjà.
+
+Puis cinq onglets :
 
 - **Vue d'ensemble** : jauge de niveau de la cuve (seuil "pleine" configurable
   via `TANK_HEIGHT_FULL_CM`), indicateurs de pluie prévue (3h / 2 jours), et
@@ -161,6 +196,59 @@ Puis quatre onglets :
   `http://<ip>/api/ota` (voir [`esp32/README.md`](esp32/README.md) > "Mise à
   jour firmware"). Un seul envoi à la fois par device (bouton désactivé
   pendant l'upload).
+- **Programmes** : création/édition de programmes d'arrosage automatiques
+  (jours, heure de déclenchement, durée, vannes, conditions), et historique
+  des exécutions récentes (exécuté/ignoré + raison). Le dashboard n'écrit que
+  la définition des programmes en base — c'est le service `scheduler` (voir
+  ci-dessous) qui les déclenche réellement.
+
+## Programmes d'arrosage automatiques
+
+Un service séparé, `scheduler`, vérifie toutes les 30s si un programme actif
+est dû (jour de la semaine + heure de déclenchement), évalue ses conditions,
+et publie la commande MQTT d'ouverture des vannes concernées (même contrat
+que le bouton "Ouvrir" du dashboard) si tout passe.
+
+Pourquoi un service séparé plutôt que dans le dashboard : l'arrosage
+automatique doit continuer à fonctionner même si le dashboard redémarre
+(ex: pendant un redéploiement).
+
+### Conditions disponibles
+
+Stockées en JSONB sur `watering_programs.conditions` (liste extensible sans
+migration) :
+
+- `no_rain_forecast` (`window_hours`, `threshold_mm`) : n'arrose pas si le
+  cumul de pluie prévu (Open-Meteo, même logique de dédup AROME/ARPEGE que
+  l'indicateur du dashboard) dépasse le seuil dans la fenêtre donnée.
+- `min_tank_pct` (`min_pct`) : n'arrose pas si le niveau de la cuve est sous
+  ce seuil. **Si aucune lecture de niveau n'est encore connue, le programme
+  est bloqué par sécurité** plutôt que de supposer la cuve pleine.
+
+Pas de condition "éviter une plage horaire" : l'heure de déclenchement du
+programme suffit à choisir quand il tourne, une condition séparée pour ça
+était redondante.
+
+### Historique et anti-doublon
+
+Chaque déclenchement (exécuté ou ignoré) est enregistré dans `watering_runs`
+avec la raison exacte en cas d'ignorance — visible dans l'onglet Programmes
+du dashboard. Une contrainte unique sur `(program_id, scheduled_for)`
+empêche un double déclenchement si le service tique plusieurs fois dans la
+même minute ou redémarre au mauvais moment.
+
+### Limites connues (v1)
+
+- Pas de déclenchement manuel hors planning depuis le dashboard (à ajouter
+  facilement plus tard si besoin).
+- Un seul fuseau horaire (celui de `TZ` dans `.env`), pas de gestion
+  multi-fuseau.
+- Pas de confirmation avant suppression d'un programme (contrairement à
+  l'OTA) : suppression directe, mais sans risque grave (la définition d'un
+  programme se recrée facilement).
+- Toutes les vannes d'un même programme partagent sa durée par défaut ; une
+  durée par vanne est prévue dans le schéma (`watering_program_valves.duration_s`)
+  mais pas encore exposée dans le formulaire du dashboard.
 
 ## Sécurité
 

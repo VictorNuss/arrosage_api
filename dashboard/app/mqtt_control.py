@@ -19,7 +19,7 @@ import threading
 
 import paho.mqtt.client as mqtt
 
-from . import config
+from . import config, queries
 
 log = logging.getLogger("dashboard.mqtt_control")
 
@@ -67,3 +67,18 @@ def send_valve_command(device_id: str, metric: str, action: str, duration_s: int
 
 def send_stop_all(device_id: str) -> bool:
     return _publish(device_id, {"action": "stop_all"})
+
+
+def send_get_status(device_id: str) -> bool:
+    """Demande au device de republier son état complet connu (vannes +
+    dernière valeur de chaque capteur déjà lu au moins une fois). Filet de
+    sécurité en plus des messages retenus par le broker."""
+    return _publish(device_id, {"action": "get_status"})
+
+
+def request_resync_all_known_devices() -> None:
+    devices = queries.get_devices()
+    for device_id in devices["device_id"]:
+        send_get_status(device_id)
+    if not devices.empty:
+        log.info("Resynchronisation (get_status) demandée à %s device(s)", len(devices))

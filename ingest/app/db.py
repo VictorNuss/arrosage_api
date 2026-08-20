@@ -1,7 +1,7 @@
 import logging
 import time
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import OperationalError
 
@@ -50,3 +50,8 @@ def insert_readings(engine, rows):
         return
     with engine.begin() as conn:
         conn.execute(sensor_readings.insert(), rows)
+
+
+def get_known_device_ids(engine):
+    with engine.connect() as conn:
+        return [row[0] for row in conn.execute(select(devices.c.device_id))]
