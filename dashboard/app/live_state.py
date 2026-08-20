@@ -5,11 +5,19 @@ ingest (~2s de batching) puis le prochain poll du dashboard.
 
 Contrat (un topic par mesure/vanne, voir esp32/README.md) :
   - capteur : {"value": 34.5}
-  - vanne   : {"state": "open"} / {"state": "closed"}
+  - vanne   : {"state": "open"} / {"state": "closed"} / {"state": "transition"}
 Pas de champ "ts" : l'horodatage de réception MQTT fait foi. L'absence d'un
 message pour une clé ne veut pas dire "capteur en panne", juste "rien de
 neuf depuis la dernière valeur connue" (le broker republie la dernière
 valeur retenue à la (re)connexion).
+
+Une vanne met ~15s à s'ouvrir/se fermer : "transition" est un état stable
+intermédiaire (pas juste un scintillement), stocké en 0.5 (0.0 fermée, 1.0
+ouverte). Comme le firmware ne précise pas le sens de la transition, ce
+cache déduit "ouverture"/"fermeture" à partir du dernier état stable connu
+avant la transition (voir `_infer_direction`) — uniquement une aide
+d'affichage, sans conséquence si elle se trompe (l'état réel affiché reste
+"transition").
 
 Le dashboard s'abonne au broker en parallèle de `ingest` : ce sont deux
 abonnés indépendants du même topic, l'un n'affecte pas l'autre. Ce cache ne
@@ -36,6 +44,11 @@ VALVE_METRIC_HINT = "vanne"
 
 _TRUTHY = {"open", "on", "true", "1", "ouvert", "ouverte"}
 _FALSY = {"closed", "off", "false", "0", "ferme", "fermee", "fermé", "fermée"}
+_TRANSITION = {"transition", "moving", "opening", "closing"}
+
+VALVE_OPEN_VALUE = 1.0
+VALVE_CLOSED_VALUE = 0.0
+VALVE_TRANSITION_VALUE = 0.5
 
 _UNIT_SUFFIXES = {
     "_cm": "cm",
@@ -66,14 +79,32 @@ def _infer_unit(metric):
 
 def _coerce_valve_state(raw_value):
     if isinstance(raw_value, bool):
-        return 1.0 if raw_value else 0.0
+        return VALVE_OPEN_VALUE if raw_value else VALVE_CLOSED_VALUE
     if isinstance(raw_value, str):
         normalized = raw_value.strip().lower()
         if normalized in _TRUTHY:
-            return 1.0
+            return VALVE_OPEN_VALUE
         if normalized in _FALSY:
-            return 0.0
+            return VALVE_CLOSED_VALUE
+        if normalized in _TRANSITION:
+            return VALVE_TRANSITION_VALUE
     raise ValueError(f"état de vanne non reconnu: {raw_value!r}")
+
+
+def _infer_direction(previous_entry):
+    """Déduit "opening"/"closing" à partir du dernier état stable connu
+    avant une transition. None si on ne sait pas (pas d'historique, ou
+    dashboard qui vient de redémarrer pile pendant une transition)."""
+    if previous_entry is None:
+        return None
+    previous_value = previous_entry["value"]
+    if previous_value <= 0.25:
+        return "opening"
+    if previous_value >= 0.75:
+        return "closing"
+    # Déjà en transition : on garde la direction déjà déduite précédemment
+    # plutôt que de la perdre à chaque nouveau message "transition".
+    return previous_entry.get("direction")
 
 
 def _coerce_sensor_value(raw_value):
@@ -125,10 +156,14 @@ def _on_message(client, userdata, message):
         return
 
     with _lock:
+        direction = None
+        if value == VALVE_TRANSITION_VALUE:
+            direction = _infer_direction(_latest.get((device_id, metric)))
         _latest[(device_id, metric)] = {
             "value": value,
             "unit": _infer_unit(metric),
             "time": datetime.now(timezone.utc),
+            "direction": direction,
         }
     log.info("Cache live: mis à jour %s/%s", device_id, metric)
 

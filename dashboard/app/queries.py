@@ -74,12 +74,15 @@ def get_latest_readings() -> pd.DataFrame:
     )
     with engine.connect() as conn:
         db_df = pd.read_sql_query(stmt, conn)
+    # La base ne connaît pas la notion de "direction" de transition (voir
+    # live_state.py) : seul le cache mémoire la fournit.
+    db_df["direction"] = None
 
     live_rows = live_state.get_latest_readings()
     if not live_rows:
         return db_df
 
-    live_df = pd.DataFrame(live_rows, columns=["device_id", "metric", "value", "unit", "time"])
+    live_df = pd.DataFrame(live_rows, columns=["device_id", "metric", "value", "unit", "time", "direction"])
     live_df["time"] = pd.to_datetime(live_df["time"], utc=True)
     if not db_df.empty:
         db_df["time"] = pd.to_datetime(db_df["time"], utc=True)

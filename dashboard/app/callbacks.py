@@ -12,6 +12,34 @@ from . import config, mqtt_control, ota_client, queries, valve_timers
 
 _VALVE_OPEN_COLOR = "#28a745"
 _VALVE_CLOSED_COLOR = "#dc3545"
+_VALVE_TRANSITION_COLOR = "#fd7e14"
+
+_VALVE_STATUS_COLORS = {"open": _VALVE_OPEN_COLOR, "closed": _VALVE_CLOSED_COLOR, "transition": _VALVE_TRANSITION_COLOR}
+_VALVE_BADGE_COLORS = {"open": "success", "closed": "secondary", "transition": "warning"}
+_TRANSITION_LABELS = {"opening": "OUVERTURE…", "closing": "FERMETURE…"}
+
+
+def _valve_status(value) -> str:
+    """Une vanne met ~15s à s'ouvrir/se fermer : le firmware publie un 3e
+    état ("transition") pendant ce délai plutôt qu'un simple 0/1. Seuils
+    plutôt qu'égalité stricte, par robustesse à l'arrondi flottant."""
+    if value >= 0.75:
+        return "open"
+    if value <= 0.25:
+        return "closed"
+    return "transition"
+
+
+def _valve_color(status: str) -> str:
+    return _VALVE_STATUS_COLORS[status]
+
+
+def _valve_label(status: str, direction=None) -> str:
+    if status == "open":
+        return "OUVERTE"
+    if status == "closed":
+        return "FERMÉE"
+    return _TRANSITION_LABELS.get(direction, "EN TRANSITION…")
 
 
 def _format_last_seen(ts: pd.Timestamp) -> str:
@@ -30,23 +58,25 @@ def _format_last_seen(ts: pd.Timestamp) -> str:
 _DURATION_OPTIONS = [{"label": f"{m} min" if m < 60 else "1 h", "value": m} for m in config.VALVE_DURATION_OPTIONS_MIN]
 
 
-def _build_valve_badge(is_open):
+def _build_valve_badge(status, direction=None):
     return dbc.Badge(
-        "OUVERTE" if is_open else "FERMÉE",
-        color="success" if is_open else "secondary",
+        _valve_label(status, direction),
+        color=_VALVE_BADGE_COLORS[status],
         className="mt-1 mb-1 d-block",
     )
 
 
-def _build_valve_countdown(device_id, metric, is_open):
-    remaining = valve_timers.get_remaining_seconds(device_id, metric) if is_open else None
+def _build_valve_countdown(device_id, metric, status):
+    remaining = valve_timers.get_remaining_seconds(device_id, metric) if status == "open" else None
     return f"Ferme dans {valve_timers.format_remaining(remaining)}" if remaining is not None else ""
 
 
 def _build_valve_chip(row):
-    is_open = row["value"] >= 0.5
+    status = _valve_status(row["value"])
+    direction = row.get("direction")
     device_id = row["device_id"]
     metric = row["metric"]
+    is_transitioning = status == "transition"
 
     return dbc.Col(
         dbc.Card(
@@ -60,11 +90,11 @@ def _build_valve_chip(row):
                     # update_valve_panel, beaucoup moins souvent, pour ne
                     # jamais perdre un clic pendant un rafraîchissement.
                     html.Div(
-                        _build_valve_badge(is_open),
+                        _build_valve_badge(status, direction),
                         id={"type": "valve-badge-wrap", "device": device_id, "metric": metric},
                     ),
                     html.Div(
-                        _build_valve_countdown(device_id, metric, is_open),
+                        _build_valve_countdown(device_id, metric, status),
                         id={"type": "valve-countdown-wrap", "device": device_id, "metric": metric},
                         className="text-muted small mb-1",
                         style={"minHeight": "1.1em"},
@@ -86,6 +116,7 @@ def _build_valve_chip(row):
                                 color="success",
                                 size="sm",
                                 n_clicks=0,
+                                disabled=is_transitioning,
                             ),
                             dbc.Button(
                                 "Fermer",
@@ -93,6 +124,7 @@ def _build_valve_chip(row):
                                 color="secondary",
                                 size="sm",
                                 n_clicks=0,
+                                disabled=is_transitioning,
                             ),
                         ],
                         size="sm",
@@ -181,7 +213,7 @@ def _build_history_figure(df: pd.DataFrame) -> go.Figure:
     if has_valves:
         for (device_id, metric), group in valve_df.sort_values("time").groupby(["device_id", "metric"]):
             label = f"{device_id} · {metric}"
-            colors = [_VALVE_OPEN_COLOR if v >= 0.5 else _VALVE_CLOSED_COLOR for v in group["value"]]
+            colors = [_valve_color(_valve_status(v)) for v in group["value"]]
             fig.add_trace(
                 go.Scatter(
                     x=group["time"],
@@ -207,14 +239,14 @@ def _build_device_card(device_row, readings_for_device: pd.DataFrame):
     metric_items = []
     for _, reading in readings_for_device.sort_values("metric").iterrows():
         if queries.is_valve_metric(reading["metric"]):
-            is_open = reading["value"] >= 0.5
+            status = _valve_status(reading["value"])
             metric_items.append(
                 dbc.ListGroupItem(
                     [
                         html.Span(reading["metric"], className="me-2"),
                         dbc.Badge(
-                            "ouverte" if is_open else "fermée",
-                            color="success" if is_open else "secondary",
+                            _valve_label(status, reading.get("direction")).lower(),
+                            color=_VALVE_BADGE_COLORS[status],
                         ),
                     ]
                 )
@@ -459,27 +491,48 @@ def register_callbacks(app):
     @app.callback(
         Output({"type": "valve-badge-wrap", "device": ALL, "metric": ALL}, "children"),
         Output({"type": "valve-countdown-wrap", "device": ALL, "metric": ALL}, "children"),
+        Output({"type": "valve-open-btn", "device": ALL, "metric": ALL}, "disabled"),
+        Output({"type": "valve-close-btn", "device": ALL, "metric": ALL}, "disabled"),
         Input("global-interval", "n_intervals"),
     )
     def update_valve_badges(_n):
         valves = queries.get_valve_states()
-        state_by_key = {(row["device_id"], row["metric"]): row["value"] for _, row in valves.iterrows()}
+        state_by_key = {
+            (row["device_id"], row["metric"]): (row["value"], row.get("direction"))
+            for _, row in valves.iterrows()
+        }
 
-        badge_ids = [o["id"] for o in ctx.outputs_list[0]] if ctx.outputs_list[0] else []
-        countdown_ids = [o["id"] for o in ctx.outputs_list[1]] if ctx.outputs_list[1] else []
+        def ids_for(index):
+            return [o["id"] for o in ctx.outputs_list[index]] if ctx.outputs_list[index] else []
+
+        badge_ids = ids_for(0)
+        countdown_ids = ids_for(1)
+        open_btn_ids = ids_for(2)
+        close_btn_ids = ids_for(3)
+
+        def status_of(oid):
+            value, direction = state_by_key.get((oid["device"], oid["metric"]), (None, None))
+            status = _valve_status(value) if value is not None else "closed"
+            return status, direction
 
         badges = []
         for oid in badge_ids:
-            value = state_by_key.get((oid["device"], oid["metric"]))
-            badges.append(_build_valve_badge(value is not None and value >= 0.5))
+            status, direction = status_of(oid)
+            badges.append(_build_valve_badge(status, direction))
 
         countdowns = []
         for oid in countdown_ids:
-            value = state_by_key.get((oid["device"], oid["metric"]))
-            is_open = value is not None and value >= 0.5
-            countdowns.append(_build_valve_countdown(oid["device"], oid["metric"], is_open))
+            status, _direction = status_of(oid)
+            countdowns.append(_build_valve_countdown(oid["device"], oid["metric"], status))
 
-        return badges, countdowns
+        # Boutons désactivés tant que la vanne est en transition (~15s) :
+        # évite d'envoyer une commande contradictoire pendant qu'elle bouge
+        # déjà. Ces props sont mises à jour en place (pas de reconstruction
+        # des boutons), donc pas de risque de perdre un clic.
+        open_disabled = [status_of(oid)[0] == "transition" for oid in open_btn_ids]
+        close_disabled = [status_of(oid)[0] == "transition" for oid in close_btn_ids]
+
+        return badges, countdowns, open_disabled, close_disabled
 
     @app.callback(Output("tank-gauge", "children"), Input("global-interval", "n_intervals"))
     def update_tank_gauge(_n):

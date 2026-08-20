@@ -74,6 +74,11 @@ def test_coerce_valve_state_rejects_unrecognized_string():
         live_state._coerce_valve_state("maybe")
 
 
+@pytest.mark.parametrize("raw_value", ["transition", "moving", "opening", "closing"])
+def test_coerce_valve_state_recognizes_transition(raw_value):
+    assert live_state._coerce_valve_state(raw_value) == 0.5
+
+
 # --- _on_message / get_latest_readings -----------------------------------------
 
 def test_on_message_updates_cache_for_a_sensor():
@@ -132,3 +137,47 @@ def test_on_message_records_a_recent_timestamp():
 
     readings = {(r["device_id"], r["metric"]): r for r in live_state.get_latest_readings()}
     assert readings[("jardin-1", "temperature_c")]["time"] >= before
+
+
+# --- transition (3e état) et inférence de direction ----------------------------
+
+def _latest_entry(device_id="jardin-1", metric="vanne_1"):
+    readings = {(r["device_id"], r["metric"]): r for r in live_state.get_latest_readings()}
+    return readings[(device_id, metric)]
+
+
+def test_transition_after_closed_is_inferred_as_opening():
+    live_state._on_message(None, None, _FakeMessage("arrosage/jardin-1/etat/vanne_1", {"state": "closed"}))
+    live_state._on_message(None, None, _FakeMessage("arrosage/jardin-1/etat/vanne_1", {"state": "transition"}))
+
+    entry = _latest_entry()
+    assert entry["value"] == 0.5
+    assert entry["direction"] == "opening"
+
+
+def test_transition_after_open_is_inferred_as_closing():
+    live_state._on_message(None, None, _FakeMessage("arrosage/jardin-1/etat/vanne_1", {"state": "open"}))
+    live_state._on_message(None, None, _FakeMessage("arrosage/jardin-1/etat/vanne_1", {"state": "transition"}))
+
+    entry = _latest_entry()
+    assert entry["direction"] == "closing"
+
+
+def test_transition_with_no_prior_state_has_unknown_direction():
+    live_state._on_message(None, None, _FakeMessage("arrosage/jardin-1/etat/vanne_1", {"state": "transition"}))
+    assert _latest_entry()["direction"] is None
+
+
+def test_repeated_transition_messages_keep_the_inferred_direction():
+    """Régression : un 2e message 'transition' consécutif ne doit pas perdre
+    la direction déjà déduite (le précédent état stable n'est plus visible)."""
+    live_state._on_message(None, None, _FakeMessage("arrosage/jardin-1/etat/vanne_1", {"state": "closed"}))
+    live_state._on_message(None, None, _FakeMessage("arrosage/jardin-1/etat/vanne_1", {"state": "transition"}))
+    live_state._on_message(None, None, _FakeMessage("arrosage/jardin-1/etat/vanne_1", {"state": "transition"}))
+
+    assert _latest_entry()["direction"] == "opening"
+
+
+def test_stable_state_has_no_direction():
+    live_state._on_message(None, None, _FakeMessage("arrosage/jardin-1/etat/vanne_1", {"state": "open"}))
+    assert _latest_entry()["direction"] is None
