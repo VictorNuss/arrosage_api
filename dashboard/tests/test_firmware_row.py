@@ -60,3 +60,19 @@ def test_hint_shown_only_when_ip_unknown():
 
     assert len(_find_all(row_unknown, is_hint)) == 1
     assert len(_find_all(row_known, is_hint)) == 0
+
+
+def test_upload_starts_with_placeholder_label():
+    row = callbacks._build_firmware_row({"device_id": "jardin-1", "name": "Jardin", "ip_address": None})
+    upload = _find_one(row, lambda c: _is_component_with_id_type(c, "ota-upload"))
+    assert upload.children.children == callbacks._UPLOAD_PLACEHOLDER
+
+
+def test_build_upload_label_shows_placeholder_when_no_file():
+    label = callbacks._build_upload_label(None)
+    assert label.children == callbacks._UPLOAD_PLACEHOLDER
+
+
+def test_build_upload_label_shows_filename_when_selected():
+    label = callbacks._build_upload_label("firmware_v3.bin")
+    assert label.children == "📄 firmware_v3.bin"

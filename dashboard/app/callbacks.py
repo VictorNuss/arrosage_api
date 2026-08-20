@@ -273,6 +273,13 @@ def _build_device_card(device_row, readings_for_device: pd.DataFrame):
     )
 
 
+_UPLOAD_PLACEHOLDER = "Glisser un .bin ou cliquer pour choisir"
+
+
+def _build_upload_label(filename):
+    return html.Div(f"📄 {filename}" if filename else _UPLOAD_PLACEHOLDER, className="small")
+
+
 def _build_firmware_row(device_row):
     device_id = device_row["device_id"]
     ip_address = device_row.get("ip_address") or ""
@@ -311,7 +318,7 @@ def _build_firmware_row(device_row):
                 dbc.Col(
                     dcc.Upload(
                         id={"type": "ota-upload", "device": device_id},
-                        children=html.Div("Glisser un .bin ou cliquer pour choisir", className="small"),
+                        children=_build_upload_label(None),
                         accept=".bin",
                         className="border rounded p-2 text-center",
                     ),
@@ -676,6 +683,13 @@ def register_callbacks(app):
         if devices.empty:
             return dbc.Alert("Aucun appareil n'a encore envoyé de données.", color="info")
         return [_build_firmware_row(row) for _, row in devices.iterrows()]
+
+    @app.callback(
+        Output({"type": "ota-upload", "device": ALL}, "children"),
+        Input({"type": "ota-upload", "device": ALL}, "filename"),
+    )
+    def show_selected_firmware_filename(filenames):
+        return [_build_upload_label(filename) for filename in filenames]
 
     @app.callback(
         Output("ota-feedback", "children", allow_duplicate=True),

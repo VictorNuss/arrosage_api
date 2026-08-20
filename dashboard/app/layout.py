@@ -129,6 +129,20 @@ def build_firmware_tab():
                                 ]
                             ),
                             type="circle",
+                            # Durée réelle inconnue à l'avance (POST HTTP
+                            # synchrone vers le device, jusqu'à 60s) : une
+                            # barre indéterminée (striée/animée) plutôt qu'un
+                            # vrai pourcentage, pour indiquer clairement que
+                            # l'envoi est en cours pendant que le callback
+                            # confirm_ota bloque.
+                            custom_spinner=dbc.Progress(
+                                value=100,
+                                striped=True,
+                                animated=True,
+                                color="warning",
+                                label="Envoi du firmware en cours…",
+                                style={"minWidth": "260px"},
+                            ),
                         )
                     ),
                 ],
