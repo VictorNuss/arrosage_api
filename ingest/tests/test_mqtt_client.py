@@ -98,10 +98,11 @@ def test_parse_payload_valve_reads_state_field(state_raw, expected_value):
     assert rows[0]["unit"] is None
 
 
-@pytest.mark.parametrize("state_raw", ["transition", "moving", "opening", "closing"])
+@pytest.mark.parametrize("state_raw", ["transitioning", "transition", "moving", "opening", "closing"])
 def test_parse_payload_valve_reads_transition_state(state_raw):
-    """La vanne met ~15s à s'ouvrir/se fermer : le firmware peut publier un
-    état intermédiaire pendant la transition."""
+    """Une électrovanne motorisée met un temps variable à s'ouvrir/se
+    fermer (les deux sens) : le firmware publie "transitioning" comme état
+    intermédiaire stable pendant ce délai."""
     payload = json.dumps({"state": state_raw}).encode("utf-8")
     rows = mqtt_client.parse_payload("jardin-1", "vanne_1", payload)
     assert rows[0]["value"] == 0.5

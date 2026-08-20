@@ -13,12 +13,15 @@ POSTGRES_USER = os.environ.get("POSTGRES_USER", "arrosage")
 POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "")
 POSTGRES_DB = os.environ.get("POSTGRES_DB", "arrosage")
 
-# Valeurs textuelles reconnues pour l'état ("state") d'une vanne. Une vanne
-# met ~15s à s'ouvrir/se fermer : le firmware publie un état intermédiaire
-# pendant la transition plutôt que de faire attendre le prochain état stable.
+# Valeurs textuelles reconnues pour l'état ("state") d'une vanne. Une
+# électrovanne motorisée (condensateur de démarrage) met un temps variable
+# (~15s par défaut, configurable côté firmware, pas figé) à actionner
+# réellement le passage d'eau, à l'ouverture COMME à la fermeture : le
+# firmware publie l'état intermédiaire "transitioning" pendant ce délai
+# plutôt que de faire attendre le prochain état stable.
 TRUTHY_STRINGS = {"open", "on", "true", "1", "ouvert", "ouverte"}
 FALSY_STRINGS = {"closed", "off", "false", "0", "ferme", "fermee", "fermé", "fermée"}
-TRANSITION_STRINGS = {"transition", "moving", "opening", "closing"}
+TRANSITION_STRINGS = {"transitioning", "transition", "moving", "opening", "closing"}
 
 # Encodage numérique stocké en base (double precision) : 1.0 ouverte, 0.0
 # fermée, 0.5 en transition. Les lectures utilisent des seuils (>=0.75 /

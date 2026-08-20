@@ -51,16 +51,17 @@ def get_known_metrics() -> list[str]:
     return df["metric"].tolist()
 
 
-def get_latest_readings() -> pd.DataFrame:
-    """Dernière valeur connue pour chaque (device, metric).
+# Deux abonnés MQTT indépendants (ingest et le cache mémoire du dashboard)
+# reçoivent le même message à quelques instants près l'un de l'autre : leurs
+# horodatages de réception peuvent différer de quelques millisecondes sans
+# que ça ne signifie que l'un des deux a raté un message. Cette marge évite
+# qu'un tel écart insignifiant ne fasse "gagner" la ligne base (qui ne
+# connaît pas la direction de transition, toujours None) sur la ligne cache
+# mémoire (qui la connaît) pour un seul et même évènement.
+_LIVE_CACHE_STALE_BUFFER = timedelta(seconds=5)
 
-    Fusionne l'instantané base (source de vérité durable) avec le cache
-    mémoire alimenté par l'abonnement MQTT direct du dashboard
-    (live_state.py) : ce dernier reflète la dernière valeur reçue à
-    l'instant près, sans attendre le batching de `ingest` ni un nouveau
-    poll. En cas de clé (device, metric) présente des deux côtés, la plus
-    récente des deux l'emporte.
-    """
+
+def _query_db_latest_readings() -> pd.DataFrame:
     stmt = (
         select(
             sensor_readings.c.device_id,
@@ -77,6 +78,23 @@ def get_latest_readings() -> pd.DataFrame:
     # La base ne connaît pas la notion de "direction" de transition (voir
     # live_state.py) : seul le cache mémoire la fournit.
     db_df["direction"] = None
+    return db_df
+
+
+def get_latest_readings() -> pd.DataFrame:
+    """Dernière valeur connue pour chaque (device, metric).
+
+    Fusionne l'instantané base (source de vérité durable) avec le cache
+    mémoire alimenté par l'abonnement MQTT direct du dashboard
+    (live_state.py) : ce dernier reflète la dernière valeur reçue à
+    l'instant près, sans attendre le batching de `ingest` ni un nouveau
+    poll. Pour une clé connue du cache mémoire, on le préfère toujours à la
+    base, sauf si celle-ci est nettement plus fraîche (au-delà de
+    `_LIVE_CACHE_STALE_BUFFER`) — signe que le cache mémoire a raté un
+    message (ex: coupure MQTT côté dashboard), pas juste l'écart normal
+    entre deux abonnés indépendants au même évènement.
+    """
+    db_df = _query_db_latest_readings()
 
     live_rows = live_state.get_latest_readings()
     if not live_rows:
@@ -84,11 +102,23 @@ def get_latest_readings() -> pd.DataFrame:
 
     live_df = pd.DataFrame(live_rows, columns=["device_id", "metric", "value", "unit", "time", "direction"])
     live_df["time"] = pd.to_datetime(live_df["time"], utc=True)
-    if not db_df.empty:
-        db_df["time"] = pd.to_datetime(db_df["time"], utc=True)
+    if db_df.empty:
+        return live_df
+    db_df["time"] = pd.to_datetime(db_df["time"], utc=True)
 
-    combined = pd.concat([db_df, live_df], ignore_index=True)
-    combined = combined.sort_values("time").drop_duplicates(subset=["device_id", "metric"], keep="last")
+    live_times = {
+        (row.device_id, row.metric): row.time for row in live_df.itertuples()
+    }
+
+    def _db_row_needed(row):
+        key = (row["device_id"], row["metric"])
+        live_time = live_times.get(key)
+        if live_time is None:
+            return True
+        return row["time"] > live_time + _LIVE_CACHE_STALE_BUFFER
+
+    db_only = db_df[db_df.apply(_db_row_needed, axis=1)] if not db_df.empty else db_df
+    combined = pd.concat([db_only, live_df], ignore_index=True)
     return combined.reset_index(drop=True)
 
 

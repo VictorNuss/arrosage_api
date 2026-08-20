@@ -5,19 +5,24 @@ ingest (~2s de batching) puis le prochain poll du dashboard.
 
 Contrat (un topic par mesure/vanne, voir esp32/README.md) :
   - capteur : {"value": 34.5}
-  - vanne   : {"state": "open"} / {"state": "closed"} / {"state": "transition"}
+  - vanne   : {"state": "open"} / {"state": "closed"} / {"state": "transitioning"}
 Pas de champ "ts" : l'horodatage de réception MQTT fait foi. L'absence d'un
 message pour une clé ne veut pas dire "capteur en panne", juste "rien de
 neuf depuis la dernière valeur connue" (le broker republie la dernière
 valeur retenue à la (re)connexion).
 
-Une vanne met ~15s à s'ouvrir/se fermer : "transition" est un état stable
+Une électrovanne motorisée met un temps variable (~15s par défaut, pas
+figé, configurable côté firmware) à actionner réellement le passage d'eau,
+à l'ouverture COMME à la fermeture : "transitioning" est un état stable
 intermédiaire (pas juste un scintillement), stocké en 0.5 (0.0 fermée, 1.0
 ouverte). Comme le firmware ne précise pas le sens de la transition, ce
 cache déduit "ouverture"/"fermeture" à partir du dernier état stable connu
 avant la transition (voir `_infer_direction`) — uniquement une aide
 d'affichage, sans conséquence si elle se trompe (l'état réel affiché reste
-"transition").
+"transitioning"). Ne pas supposer une durée fixe : c'est le device qui
+publiera l'état final (open/closed) quand il sera prêt, get_status peut
+tout à fait renvoyer "transitioning" si une commande est en cours — c'est
+un état normal, pas une erreur.
 
 Le dashboard s'abonne au broker en parallèle de `ingest` : ce sont deux
 abonnés indépendants du même topic, l'un n'affecte pas l'autre. Ce cache ne
@@ -44,7 +49,7 @@ VALVE_METRIC_HINT = "vanne"
 
 _TRUTHY = {"open", "on", "true", "1", "ouvert", "ouverte"}
 _FALSY = {"closed", "off", "false", "0", "ferme", "fermee", "fermé", "fermée"}
-_TRANSITION = {"transition", "moving", "opening", "closing"}
+_TRANSITION = {"transitioning", "transition", "moving", "opening", "closing"}
 
 VALVE_OPEN_VALUE = 1.0
 VALVE_CLOSED_VALUE = 0.0

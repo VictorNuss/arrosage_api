@@ -71,8 +71,10 @@ Voir [`esp32/README.md`](esp32/README.md) pour le contrat complet et à jour
   `arrosage/<device_id>/etat/<key>`, retain=true, publié seulement quand une
   donnée fraîche existe (pas de cycle périodique, pas de valeur bidon).
   Payload capteur `{"value": 34.5}`, payload vanne `{"state": "open"}` (une
-  vanne a 3 états possibles : `"open"`/`"closed"`/`"transition"` — elle met
-  ~15s à s'ouvrir/se fermer, voir plus bas). L'absence de message pour une
+  vanne a 3 états possibles : `"open"`/`"closed"`/`"transitioning"` — le
+  moteur met un temps variable (~15s par défaut, pas figé) à actionner le
+  passage d'eau, à l'ouverture comme à la fermeture, voir plus bas).
+  L'absence de message pour une
   clé ne veut pas dire "en panne", juste "rien de neuf" — le backend
   s'abonne avec le wildcard `arrosage/+/etat/#`.
 - Commande (serveur → device) : `arrosage/<device_id>/commande`, jamais
@@ -169,11 +171,15 @@ l'état réel rapporté par l'ESP32 (`.../etat`), pas la commande envoyée — e
 cas de défaut matériel, badge et commande peuvent diverger, ce qui est
 volontaire (on voit l'état réel, pas ce qu'on a demandé).
 
-Pendant la transition (~15s), le badge affiche "OUVERTURE…"/"FERMETURE…"
-(orange) — le sens est déduit du dernier état stable connu avant la
-transition, purement indicatif — et les boutons Ouvrir/Fermer de cette
-vanne sont désactivés le temps que la transition se termine, pour éviter
-d'envoyer une commande contradictoire pendant qu'elle bouge déjà.
+Pendant la transition (durée variable, ~15s par défaut, à l'ouverture
+comme à la fermeture), le badge affiche "OUVERTURE…"/"FERMETURE…" (orange)
+— le sens est déduit du dernier état stable connu avant la transition,
+purement indicatif — et les boutons Ouvrir/Fermer de cette vanne sont
+désactivés le temps que la transition se termine, pour éviter d'envoyer
+une commande contradictoire pendant qu'elle bouge déjà. Le dashboard
+n'impose aucun délai fixe pour considérer qu'une commande a "échoué" :
+tant que l'état final (ouverte/fermée) n'arrive pas, il affiche
+simplement "en transition", ce qui reste un état normal.
 
 Puis cinq onglets :
 
