@@ -34,11 +34,20 @@ Payload vanne :
 ```json
 {"state": "open"}
 ```
-Une vanne met ~15s à s'ouvrir/se fermer : pendant ce délai, publier un 3e
-état plutôt que de laisser le dashboard croire qu'elle est encore dans son
-état précédent :
+Les électrovannes sont motorisées (condensateur de démarrage) : ni
+l'ouverture ni la fermeture ne sont instantanées, le moteur met un temps
+variable (~15s par défaut, configurable côté firmware, **pas figé**) à
+actionner réellement le passage d'eau — **dans les deux sens**. Séquence
+exacte pour une commande `open` ou `close` :
+
+1. Le device publie immédiatement `{"state": "transitioning"}` dès qu'il
+   reçoit la commande (le GPIO a basculé, le moteur n'a pas fini son
+   mouvement).
+2. Une fois le mouvement terminé (délai variable), le device publie l'état
+   final : `{"state": "open"}` ou `{"state": "closed"}` selon la commande.
+
 ```json
-{"state": "transition"}
+{"state": "transitioning"}
 ```
 
 Règles :
@@ -48,17 +57,23 @@ Règles :
   connue". Le `retain` du broker redonne la dernière valeur connue à un
   abonné qui (re)démarre ou se reconnecte.
 - Les métriques de vannes contiennent `vanne` dans leur nom, valeur
-  `"open"`/`"closed"`/`"transition"` (chaînes) dans le champ `state` (aussi
-  acceptés en synonymes : `"on"`/`"off"`, `"moving"`, `"opening"`,
-  `"closing"` — ces deux derniers sont traités comme une simple transition,
-  le backend ne s'appuie pas dessus pour connaître le sens : voir plus bas).
+  `"open"`/`"closed"`/`"transitioning"` (chaînes) dans le champ `state`
+  (aussi acceptés en synonymes : `"on"`/`"off"`, `"transition"`,
+  `"moving"`, `"opening"`, `"closing"` — ces trois derniers sont traités
+  comme une simple transition, le backend ne s'appuie pas dessus pour
+  connaître le sens : voir plus bas).
 - Le backend ne connaît pas le sens de la transition à partir du seul
-  champ `state` (`"transition"` ne le précise pas) : le dashboard déduit
+  champ `state` (`"transitioning"` ne le précise pas) : le dashboard déduit
   "ouverture"/"fermeture" à partir du dernier état stable connu avant la
   transition. C'est purement indicatif pour l'affichage ; si le firmware
-  peut publier directement `"opening"`/`"closing"` plutôt qu'un `"transition"`
-  générique, c'est plus fiable et le backend les reconnaît déjà tous les
-  deux.
+  peut publier directement `"opening"`/`"closing"` plutôt qu'un
+  `"transitioning"` générique, c'est plus fiable et le backend les
+  reconnaît déjà tous les deux.
+- **`"transitioning"` est un état normal, pas une erreur** : le backend
+  n'impose aucun délai fixe avant de considérer qu'une commande a "échoué"
+  faute d'état final — il affiche `"transitioning"` tel quel tant qu'il ne
+  reçoit rien d'autre. `get_status` peut lui aussi renvoyer
+  `"transitioning"` si une commande est en cours au moment de la requête.
 - Suffixes de nom reconnus par le dashboard pour l'unité affichée : `_cm`,
   `_mm`, `_pct`, `_c` (°C), `_v` (V).
 - Le backend s'abonne avec le wildcard `arrosage/+/etat/#` (un seul niveau
