@@ -7,6 +7,11 @@ MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD") or None
 MQTT_TOPIC = "arrosage/+/etat/#"
 VALVE_METRIC_HINT = "vanne"
 
+# Topic racine de Zigbee2MQTT (son réglage mqtt.base_topic). Les états de
+# capteurs Zigbee publiés dessous sont republiés dans le contrat device
+# (voir zigbee.py). Vide = intégration désactivée.
+ZIGBEE2MQTT_BASE_TOPIC = os.environ.get("ZIGBEE2MQTT_BASE_TOPIC", "zigbee2mqtt").strip().strip("/")
+
 # Clé publiée par chaque device (à sa connexion MQTT et en réponse à un
 # get_status) pour faire connaître son IP locale fixe : arrosage/<device_id>
 # /etat/ip, {"value": "192.168.1.50"}. Contrairement aux autres clés, la
@@ -14,6 +19,12 @@ VALVE_METRIC_HINT = "vanne"
 # (utilisée pour cibler l'OTA), pas sensor_readings (qui ne stocke que des
 # float).
 IP_METRIC_KEY = "ip"
+
+# Même cycle de publication que "ip" (connexion MQTT + get_status) : version
+# du firmware en cours d'exécution, {"value": "v1.2.0"}. Chaîne libre (tag
+# git, hash...), alimente devices.fw_version.
+FW_VERSION_METRIC_KEY = "fw_version"
+FW_VERSION_MAX_LENGTH = 64
 
 POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "timescaledb")
 POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", "5432"))

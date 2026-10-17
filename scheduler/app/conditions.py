@@ -50,10 +50,44 @@ def evaluate_min_tank_pct(tank_value_cm, tank_height_full_cm, params):
     return True, None
 
 
+def evaluate_max_soil_moisture(soil_readings, now, params):
+    """Ne pas arroser si le sol est déjà humide : moyenne des dernières
+    mesures récentes des capteurs choisis (params["device_ids"]) comparée à
+    params["max_pct"].
+
+    soil_readings: {device_id: {"value": float, "time": datetime}}, dernière
+    humidité connue de chaque capteur de sol.
+
+    Moyenne plutôt que "tous les capteurs" : un programme arrose souvent
+    une zone couverte par plusieurs capteurs, un seul capteur mal planté ne
+    doit pas décider pour toute la zone.
+
+    Contrairement au niveau de cuve, l'absence de mesure récente (pile
+    vide, capteur hors de portée...) laisse arroser : mieux vaut un
+    arrosage de trop qu'un potager qui sèche à cause d'un capteur muet.
+    """
+    max_pct = params.get("max_pct", 60)
+    max_age = timedelta(hours=params.get("max_age_hours", 6))
+    fresh_values = [
+        reading["value"]
+        for device_id in params.get("device_ids") or []
+        if (reading := soil_readings.get(device_id)) is not None and now - reading["time"] <= max_age
+    ]
+    if not fresh_values:
+        return True, None
+    mean_pct = sum(fresh_values) / len(fresh_values)
+    if mean_pct >= max_pct:
+        return False, f"sol déjà humide ({mean_pct:.0f}% ≥ {max_pct}%, {len(fresh_values)} capteur(s))"
+    return True, None
+
+
 _EVALUATORS = {
     "no_rain_forecast": lambda condition, ctx: evaluate_no_rain_forecast(ctx["rain_rows"], ctx["now"], condition),
     "min_tank_pct": lambda condition, ctx: evaluate_min_tank_pct(
         ctx["tank_value_cm"], ctx["tank_height_full_cm"], condition
+    ),
+    "max_soil_moisture": lambda condition, ctx: evaluate_max_soil_moisture(
+        ctx.get("soil_readings", {}), ctx["now"], condition
     ),
 }
 
@@ -61,7 +95,7 @@ _EVALUATORS = {
 def evaluate_conditions(conditions, context):
     """conditions: liste de dicts avec une clé "type" (+ paramètres propres
     au type). context: dict avec "now" (datetime tz-aware), "rain_rows",
-    "tank_value_cm", "tank_height_full_cm".
+    "tank_value_cm", "tank_height_full_cm", "soil_readings".
 
     Renvoie (True, None) si toutes les conditions passent, sinon
     (False, raison) dès le premier échec. Un type de condition inconnu est

@@ -33,6 +33,31 @@ def test_valve_label_transition_unknown_direction_falls_back():
     assert callbacks._valve_label("transition", "sideways") == "EN TRANSITION…"
 
 
+@pytest.mark.parametrize(
+    "status,direction,expected",
+    [("open", None, True), ("transition", "opening", True), ("transition", "closing", False),
+     ("transition", None, False), ("closed", None, False)],
+)
+def test_is_opening(status, direction, expected):
+    assert callbacks._is_opening(status, direction) is expected
+
+
+def test_open_button_becomes_extend_when_valve_is_opening():
+    assert callbacks._open_button_label("open") == "Prolonger"
+    assert callbacks._open_button_label("transition", "opening") == "Prolonger"
+    assert callbacks._open_button_label("closed") == "Ouvrir"
+    assert callbacks._open_button_label("transition", "closing") == "Ouvrir"
+
+
+@pytest.mark.parametrize(
+    "status,direction,expected",
+    [("open", None, False), ("closed", None, False), ("transition", "opening", False),
+     ("transition", "closing", True), ("transition", None, True)],
+)
+def test_valve_buttons_disabled(status, direction, expected):
+    assert callbacks._valve_buttons_disabled(status, direction) is expected
+
+
 def test_valve_color_matches_status():
     assert callbacks._valve_color("open") == callbacks._VALVE_OPEN_COLOR
     assert callbacks._valve_color("closed") == callbacks._VALVE_CLOSED_COLOR

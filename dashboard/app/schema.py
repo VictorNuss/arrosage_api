@@ -33,6 +33,7 @@ devices = Table(
     Column("lat", Double),
     Column("lon", Double),
     Column("ip_address", String),
+    Column("fw_version", String),
     Column("created_at", TIMESTAMP(timezone=True)),
 )
 

@@ -2,6 +2,23 @@ from dash import dcc, html
 import dash_bootstrap_components as dbc
 
 from . import config
+from .firmware_tab import build_firmware_tab
+from .weather_tab import build_weather_tab
+
+
+def build_header():
+    return html.Header(
+        [
+            html.Div(html.I(className="bi bi-droplet-half"), className="app-logo"),
+            html.Div(
+                [
+                    html.H1("Supervision Arrosage", className="app-title"),
+                    html.Div("Vannes, capteurs, météo et programmes d'arrosage", className="app-subtitle"),
+                ]
+            ),
+        ],
+        className="app-header",
+    )
 
 
 def build_valve_panel():
@@ -15,6 +32,7 @@ def build_valve_panel():
             # boutons au même rythme que l'état (2s) ferait perdre des clics
             # si l'utilisateur clique juste au moment d'un rafraîchissement.
             dcc.Interval(id="valve-structure-interval", interval=20_000),
+            html.Div([html.I(className="bi bi-droplet-half me-1"), "Vannes"], className="section-title"),
             html.Div(id="valve-command-feedback"),
             html.Div(id="valve-panel"),
         ],
@@ -32,6 +50,7 @@ def build_overview_tab():
                 ],
                 className="g-3 pb-3",
             ),
+            html.Div(id="soil-panel"),
             html.Div(id="overview-cards"),
         ],
         className="pt-3",
@@ -72,69 +91,6 @@ def build_history_tab():
                 className="g-3 pt-3",
             ),
             dcc.Loading(dcc.Graph(id="history-graph"), className="pt-3"),
-        ],
-        className="pt-3",
-    )
-
-
-def _windy_radar_url():
-    return (
-        "https://embed.windy.com/embed2.html"
-        f"?lat={config.WEATHER_LAT}&lon={config.WEATHER_LON}"
-        f"&detailLat={config.WEATHER_LAT}&detailLon={config.WEATHER_LON}"
-        "&width=650&height=450&zoom=8&level=surface"
-        "&overlay=radar&product=radar"
-        "&menu=&message=true&marker=true&calendar=now&pressure="
-        "&type=map&location=coordinates&detail="
-        "&metricWind=default&metricTemp=default&radarRange=-1"
-    )
-
-
-def build_weather_tab():
-    return html.Div(
-        [
-            dcc.Interval(id="weather-interval", interval=5 * 60_000),
-            html.Div(id="weather-content"),
-            html.H5("Carte radar (Windy)", className="pt-4"),
-            html.Iframe(
-                src=_windy_radar_url(),
-                style={"border": "none", "width": "100%", "height": "450px"},
-            ),
-        ],
-        className="pt-3",
-    )
-
-
-def build_firmware_tab():
-    return html.Div(
-        [
-            dcc.Store(id="ota-pending-upload"),
-            html.Div(id="ota-feedback"),
-            html.Div(id="firmware-rows"),
-            dbc.Modal(
-                [
-                    dbc.ModalHeader("Confirmer la mise à jour"),
-                    dbc.ModalBody(id="ota-modal-body"),
-                    dbc.ModalFooter(
-                        dcc.Loading(
-                            dbc.ButtonGroup(
-                                [
-                                    dbc.Button("Annuler", id="ota-cancel-btn", color="secondary"),
-                                    dbc.Button(
-                                        "Confirmer et envoyer",
-                                        id="ota-confirm-btn",
-                                        color="danger",
-                                        disabled=False,
-                                    ),
-                                ]
-                            ),
-                            type="circle",
-                        )
-                    ),
-                ],
-                id="ota-confirm-modal",
-                is_open=False,
-            ),
         ],
         className="pt-3",
     )
@@ -235,6 +191,48 @@ def build_programs_tab():
                                     ],
                                     md=4,
                                 ),
+                                className="mb-2",
+                            ),
+                            dbc.Switch(
+                                id="program-form-cond-soil-enabled",
+                                label="Ne pas arroser si le sol est déjà humide",
+                                value=False,
+                            ),
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        [
+                                            dbc.Label("Humidité moyenne max (%)", size="sm"),
+                                            dbc.Input(
+                                                id="program-form-cond-soil-pct",
+                                                type="number",
+                                                min=0,
+                                                max=100,
+                                                value=config.DEFAULT_SOIL_MAX_PCT,
+                                                size="sm",
+                                            ),
+                                        ],
+                                        md=4,
+                                    ),
+                                    dbc.Col(
+                                        [
+                                            dbc.Label("Capteurs de sol", size="sm"),
+                                            dcc.Dropdown(
+                                                id="program-form-cond-soil-sensors",
+                                                multi=True,
+                                                placeholder="Capteurs de la zone arrosée",
+                                            ),
+                                        ],
+                                        md=8,
+                                    ),
+                                ],
+                                className="g-2",
+                            ),
+                            html.Div(
+                                "Moyenne des dernières mesures de moins de "
+                                f"{config.SOIL_STALE_HOURS} h des capteurs choisis. Sans mesure récente "
+                                "(pile vide, hors de portée…), le programme arrose quand même.",
+                                className="form-text",
                             ),
                         ]
                     ),
@@ -259,7 +257,7 @@ def build_programs_tab():
 def build_layout():
     return dbc.Container(
         [
-            html.H2("Supervision Arrosage", className="pt-4 pb-2"),
+            build_header(),
             build_valve_panel(),
             dbc.Tabs(
                 [
@@ -271,7 +269,9 @@ def build_layout():
                 ],
                 id="tabs",
                 active_tab="overview",
+                className="app-tabs",
             ),
         ],
         fluid=True,
+        className="app-container pb-5",
     )

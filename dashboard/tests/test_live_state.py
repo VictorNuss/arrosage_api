@@ -131,11 +131,11 @@ def test_on_message_ignores_unexpected_topic_shape():
     assert live_state.get_latest_readings() == []
 
 
-def test_on_message_ignores_the_ip_key():
-    """La clé "ip" (arrosage/<device_id>/etat/ip) alimente devices.ip_address
-    via ingest, pas ce cache : sa valeur est une chaîne, pas un capteur ni
-    une vanne."""
-    message = _FakeMessage("arrosage/jardin-1/etat/ip", {"value": "192.168.1.50"})
+@pytest.mark.parametrize("key,value", [("ip", "192.168.1.50"), ("fw_version", "v1.2.0")])
+def test_on_message_ignores_device_info_keys(key, value):
+    """Les clés "ip"/"fw_version" alimentent la table devices via ingest, pas
+    ce cache : leur valeur est une chaîne, pas un capteur ni une vanne."""
+    message = _FakeMessage(f"arrosage/jardin-1/etat/{key}", {"value": value})
     live_state._on_message(None, None, message)
     assert live_state.get_latest_readings() == []
 

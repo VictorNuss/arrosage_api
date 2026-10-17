@@ -8,6 +8,23 @@ def test_mark_opened_reports_remaining_close_to_duration():
     assert 595 <= remaining <= 600
 
 
+def test_mark_extended_adds_to_the_remaining_time():
+    valve_timers.mark_opened("jardin-1", "vanne_1", 300)
+    valve_timers.mark_extended("jardin-1", "vanne_1", 600)
+    assert 895 <= valve_timers.get_remaining_seconds("jardin-1", "vanne_1") <= 900
+
+
+def test_mark_extended_without_known_timer_starts_from_now():
+    valve_timers.mark_extended("jardin-1", "vanne_2", 600)
+    assert 595 <= valve_timers.get_remaining_seconds("jardin-1", "vanne_2") <= 600
+
+
+def test_mark_extended_after_expiry_starts_from_now():
+    valve_timers.mark_opened("jardin-1", "vanne_3", -30)
+    valve_timers.mark_extended("jardin-1", "vanne_3", 60)
+    assert 55 <= valve_timers.get_remaining_seconds("jardin-1", "vanne_3") <= 60
+
+
 def test_mark_closed_clears_the_timer():
     valve_timers.mark_opened("jardin-1", "vanne_2", 600)
     valve_timers.mark_closed("jardin-1", "vanne_2")

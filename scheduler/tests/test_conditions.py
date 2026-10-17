@@ -115,3 +115,42 @@ def test_evaluate_conditions_ignores_unknown_condition_type():
     ok, reason = conditions.evaluate_conditions([{"type": "max_wind_kmh", "max": 30}], ctx)
     assert ok is True
     assert reason is None
+
+
+# --- evaluate_max_soil_moisture ---------------------------------------------------
+
+def _soil(value, hours_ago=1):
+    return {"value": value, "time": NOW - timedelta(hours=hours_ago)}
+
+
+_SOIL_PARAMS = {"device_ids": ["sol-a", "sol-b"], "max_pct": 60, "max_age_hours": 6}
+
+
+def test_soil_condition_skips_when_mean_moisture_reaches_threshold():
+    ok, reason = conditions.evaluate_max_soil_moisture({"sol-a": _soil(70), "sol-b": _soil(50)}, NOW, _SOIL_PARAMS)
+    assert ok is False
+    assert "60%" in reason and "2 capteur(s)" in reason
+
+
+def test_soil_condition_passes_when_soil_is_dry():
+    ok, reason = conditions.evaluate_max_soil_moisture({"sol-a": _soil(40), "sol-b": _soil(50)}, NOW, _SOIL_PARAMS)
+    assert ok is True and reason is None
+
+
+def test_soil_condition_ignores_stale_and_unselected_sensors():
+    readings = {"sol-a": _soil(90, hours_ago=12), "sol-b": _soil(30), "sol-c": _soil(95)}
+    ok, _ = conditions.evaluate_max_soil_moisture(readings, NOW, _SOIL_PARAMS)
+    assert ok is True
+
+
+def test_soil_condition_waters_anyway_without_recent_reading():
+    """Capteur muet (pile vide...) : on arrose plutôt que de laisser sécher."""
+    ok, reason = conditions.evaluate_max_soil_moisture({}, NOW, _SOIL_PARAMS)
+    assert ok is True and reason is None
+
+
+def test_evaluate_conditions_dispatches_soil_condition():
+    context = {"now": NOW, "rain_rows": [], "tank_value_cm": None, "tank_height_full_cm": 150,
+               "soil_readings": {"sol-a": _soil(80)}}
+    ok, reason = conditions.evaluate_conditions([{"type": "max_soil_moisture", **_SOIL_PARAMS}], context)
+    assert ok is False and "sol déjà humide" in reason

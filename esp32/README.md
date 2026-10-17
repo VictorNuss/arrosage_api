@@ -101,6 +101,19 @@ Règles :
   dashboard grise le bouton de mise à jour OTA tant qu'elle est absente,
   et permet de forcer un `get_status` pour redemander sa republication.
 
+### Clé spéciale `fw_version`
+
+Topic `arrosage/<device_id>/etat/fw_version`, payload `{"value": "v1.2.0"}`.
+Comme `ip` : une **chaîne** (version du firmware en cours d'exécution,
+`esp_app_get_description()->version` côté ESP-IDF — tag/`git describe` au
+moment du build), publiée aux mêmes moments (chaque connexion MQTT +
+`get_status`, retain=true). Elle alimente `devices.fw_version`, pas
+`sensor_readings`. Le dashboard l'affiche dans l'onglet Firmware et dans la
+confirmation d'envoi ; après un OTA réussi, le device redémarre et republie
+sa nouvelle version, ce qui permet de vérifier que la mise à jour a bien été
+appliquée (et pas annulée par le rollback). Chaîne non vide, 64 caractères
+imprimables au plus — sinon le message est ignoré par `ingest`.
+
 ## Commande des vannes (serveur → device)
 
 Topic : `arrosage/<device_id>/commande`, QoS 1, **jamais retain**.
@@ -121,7 +134,12 @@ Topic : `arrosage/<device_id>/commande`, QoS 1, **jamais retain**.
 Règles :
 - `action: "open"` + `duration_s` → le **firmware** gère localement le
   minuteur d'auto-fermeture (robuste à une coupure réseau/dashboard après
-  l'envoi de la commande).
+  l'envoi de la commande). Sur une vanne **déjà ouverte ou en cours
+  d'ouverture**, `open` ne rejoue pas la transition (rien ne bouge, aucun
+  état republié) : `duration_s` s'**ajoute** au temps restant
+  ("extra-time"), le total restant borné par la durée max de la vanne.
+  C'est le bouton "Prolonger" du dashboard ; un programme qui se déclenche
+  sur une vanne déjà ouverte la prolonge de la même façon.
 - `action: "close"` → ferme immédiatement, annule le minuteur en cours pour
   cette vanne.
 - `action: "stop_all"` → ferme toutes les vannes immédiatement (pas de champ
@@ -143,8 +161,9 @@ Règles :
 
 ## Mise à jour firmware (OTA), en HTTP local — pas de MQTT
 
-Chaque device a une IP locale fixe (configurée au flashage, saisie une fois
-dans le dashboard, onglet "Firmware"). Il héberge un serveur HTTP local :
+Chaque device a une IP locale fixe (configurée au flashage, publiée par le
+device lui-même via la clé MQTT `ip`, voir README principal). Il héberge un
+serveur HTTP local :
 
 ```
 POST http://<ip_fixe_du_device>/api/ota
@@ -166,20 +185,43 @@ Test manuel :
 curl -X POST --data-binary @arrosage_fw.bin http://192.168.1.50/api/ota
 ```
 
-### Tester l'OTA sans matériel
+### Tester sans matériel : device simulé
 
-[`mock_ota_server.py`](mock_ota_server.py) simule cet endpoint (bibliothèque
-standard uniquement, tourne directement sur l'hôte, pas besoin de Docker) :
+[`device_simulator.py`](device_simulator.py) simule un device complet en
+respectant ce contrat : publication de `ip`/`fw_version` à la connexion,
+capteurs à chaque "lecture" (la cuve baisse et le sol s'humidifie quand une
+vanne est ouverte), vannes à 3 états avec fermeture automatique (mêmes
+durées max que `valve_config.cpp`), commandes `open`/`close`/`stop_all`/
+`get_status`, et endpoint `POST /api/ota`.
+
+Comme le vrai device, l'OTA n'accepte qu'une **vraie image ESP-IDF** : la
+version est lue dans le descripteur d'application du `.bin`, puis le device
+"redémarre" (déconnexion MQTT, vannes fermées) et republie cette nouvelle
+version. Pour tester, envoyer le `build/arrosage_fw.bin` du repo firmware
+(`idf.py build`) ; tout autre fichier est refusé (`400`), ce qui teste le
+chemin d'erreur du dashboard. `GET /api/state` renvoie un instantané JSON.
+
+Il tourne dans la stack Docker (profil `sim`, désactivé par défaut) : son
+IP de conteneur est joignable par le dashboard, sur le port 80 qu'il
+utilise toujours (il n'accepte qu'une IPv4 nue, sans `:port`).
 
 ```bash
-python esp32/mock_ota_server.py 8090
+docker compose --profile sim up -d --build     # sim-jardin + sim-serre
+docker compose --profile sim logs -f device-sim-jardin
 ```
 
-Il accepte n'importe quel corps non vide (`200 OK, redemarrage en
-cours...`), sauf s'il commence par `FAIL` (`400`, pratique pour tester le
-chemin d'erreur du dashboard). Un délai de 2s est simulé avant la réponse.
-Dans le dashboard, renseigner `<IP de cette machine>:8090` comme IP du
-device dans l'onglet Firmware pour tester le relais de bout en bout.
+Chaque device simulé est un service de `docker-compose.yml` avec un
+`SIM_DEVICE_ID` fixe (stable d'un rebuild à l'autre) ; pour en ajouter un,
+copier le bloc `device-sim-serre` en changeant son nom et son
+`SIM_DEVICE_ID`. Autres réglages par variable d'environnement ou option : `SIM_FW_VERSION` (`v0.0.0-sim`),
+`SIM_TRANSITION_DELAY_S` (15), `SIM_SENSOR_PERIOD_S` (10),
+`SIM_REBOOT_DELAY_S` (3) — voir `python esp32/device_simulator.py --help`.
+
+Tests du simulateur :
+
+```bash
+uv run --no-project --python 3.12 --with paho-mqtt==2.1.0 --with pytest pytest esp32 -q
+```
 
 ## Tester le contrat MQTT sans matériel
 

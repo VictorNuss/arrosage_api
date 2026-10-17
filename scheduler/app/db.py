@@ -61,6 +61,23 @@ def get_latest_tank_value(engine):
     return row[0] if row else None
 
 
+def get_latest_soil_moisture(engine, device_ids):
+    """Dernière humidité du sol connue de chaque capteur demandé :
+    {device_id: {"value": float, "time": datetime}}."""
+    if not device_ids:
+        return {}
+    stmt = (
+        select(sensor_readings.c.device_id, sensor_readings.c.value, sensor_readings.c.time)
+        .where(sensor_readings.c.metric == config.SOIL_MOISTURE_METRIC)
+        .where(sensor_readings.c.device_id.in_(list(device_ids)))
+        .distinct(sensor_readings.c.device_id)
+        .order_by(sensor_readings.c.device_id, sensor_readings.c.time.desc())
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return {row["device_id"]: {"value": row["value"], "time": row["time"]} for row in rows}
+
+
 def get_rain_forecast_rows(engine):
     """weather_forecast est un instantané (voir weather/app/main.py) : pas de
     filtre de fraîcheur nécessaire, toute la table est la dernière prévision

@@ -1,4 +1,3 @@
-import base64
 from datetime import datetime, time as time_type, timedelta, timezone
 
 import pandas as pd
@@ -8,7 +7,8 @@ from dash.exceptions import PreventUpdate
 from plotly.subplots import make_subplots
 import dash_bootstrap_components as dbc
 
-from . import config, mqtt_control, ota_client, queries, valve_timers
+from . import config, mqtt_control, queries, soil_panel, valve_timers
+from .formatting import format_last_seen, format_metric_value, metric_icon, metric_label
 
 _VALVE_OPEN_COLOR = "#28a745"
 _VALVE_CLOSED_COLOR = "#dc3545"
@@ -42,19 +42,6 @@ def _valve_label(status: str, direction=None) -> str:
     return _TRANSITION_LABELS.get(direction, "EN TRANSITION…")
 
 
-def _format_last_seen(ts: pd.Timestamp) -> str:
-    if pd.isna(ts):
-        return "jamais"
-    delta = datetime.now(timezone.utc) - ts.to_pydatetime()
-    if delta < timedelta(minutes=1):
-        return "à l'instant"
-    if delta < timedelta(hours=1):
-        return f"il y a {int(delta.total_seconds() // 60)} min"
-    if delta < timedelta(days=1):
-        return f"il y a {int(delta.total_seconds() // 3600)} h"
-    return f"il y a {delta.days} j"
-
-
 _DURATION_OPTIONS = [{"label": f"{m} min" if m < 60 else "1 h", "value": m} for m in config.VALVE_DURATION_OPTIONS_MIN]
 
 
@@ -64,6 +51,23 @@ def _build_valve_badge(status, direction=None):
         color=_VALVE_BADGE_COLORS[status],
         className="mt-1 mb-1 d-block",
     )
+
+
+def _is_opening(status, direction=None) -> bool:
+    """Ouverte, ou en cours d'ouverture : une nouvelle commande "open" la
+    prolonge ("extra-time") au lieu de la rouvrir (voir esp32/README.md)."""
+    return status == "open" or (status == "transition" and direction == "opening")
+
+
+def _open_button_label(status, direction=None) -> str:
+    return "Prolonger" if _is_opening(status, direction) else "Ouvrir"
+
+
+def _valve_buttons_disabled(status, direction=None) -> bool:
+    """Boutons grisés pendant une fermeture en cours (ou une transition de
+    sens inconnu) ; pendant une ouverture, "Prolonger" et "Fermer" (annuler)
+    restent possibles."""
+    return status == "transition" and direction != "opening"
 
 
 def _build_valve_countdown(device_id, metric, status):
@@ -76,13 +80,17 @@ def _build_valve_chip(row):
     direction = row.get("direction")
     device_id = row["device_id"]
     metric = row["metric"]
-    is_transitioning = status == "transition"
+    buttons_disabled = _valve_buttons_disabled(status, direction)
 
     return dbc.Col(
         dbc.Card(
             dbc.CardBody(
                 [
-                    html.Div(metric, className="fw-bold small"),
+                    html.Div(
+                        [html.I(className=f"bi {metric_icon(metric)} me-1 text-primary"), metric_label(metric)],
+                        className="fw-bold small",
+                        title=metric,
+                    ),
                     html.Div(device_id, className="text-muted small"),
                     # Contenu de ces deux divs géré par update_valve_badges
                     # (rafraîchi toutes les 2s) : la structure ci-dessous
@@ -111,12 +119,12 @@ def _build_valve_chip(row):
                     dbc.ButtonGroup(
                         [
                             dbc.Button(
-                                "Ouvrir",
+                                _open_button_label(status, direction),
                                 id={"type": "valve-open-btn", "device": device_id, "metric": metric},
                                 color="success",
                                 size="sm",
                                 n_clicks=0,
-                                disabled=is_transitioning,
+                                disabled=buttons_disabled,
                             ),
                             dbc.Button(
                                 "Fermer",
@@ -124,14 +132,15 @@ def _build_valve_chip(row):
                                 color="secondary",
                                 size="sm",
                                 n_clicks=0,
-                                disabled=is_transitioning,
+                                disabled=buttons_disabled,
                             ),
                         ],
                         size="sm",
                     ),
                 ],
                 className="text-center py-2",
-            )
+            ),
+            className="valve-chip h-100",
         ),
         width="auto",
     )
@@ -157,7 +166,12 @@ def _build_tank_gauge_figure(tank):
             title={"text": "Cuve pleine ✅" if is_full else "Niveau de la cuve"},
         )
     )
-    fig.update_layout(height=220, margin=dict(l=20, r=20, t=40, b=10))
+    fig.update_layout(
+        height=220,
+        margin=dict(l=30, r=30, t=40, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
     return fig
 
 
@@ -235,112 +249,44 @@ def _build_history_figure(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def _build_metric_item(reading):
+    metric = reading["metric"]
+    if queries.is_valve_metric(metric):
+        status = _valve_status(reading["value"])
+        value = dbc.Badge(_valve_label(status, reading.get("direction")).lower(), color=_VALVE_BADGE_COLORS[status])
+    else:
+        value = html.Span(format_metric_value(metric, reading["value"], reading["unit"]), className="fw-semibold")
+    return dbc.ListGroupItem(
+        [
+            html.Span([html.I(className=f"bi {metric_icon(metric)} me-2 text-primary"), metric_label(metric)], title=metric),
+            value,
+        ],
+        className="d-flex justify-content-between align-items-center",
+    )
+
+
 def _build_device_card(device_row, readings_for_device: pd.DataFrame):
-    metric_items = []
-    for _, reading in readings_for_device.sort_values("metric").iterrows():
-        if queries.is_valve_metric(reading["metric"]):
-            status = _valve_status(reading["value"])
-            metric_items.append(
-                dbc.ListGroupItem(
-                    [
-                        html.Span(reading["metric"], className="me-2"),
-                        dbc.Badge(
-                            _valve_label(status, reading.get("direction")).lower(),
-                            color=_VALVE_BADGE_COLORS[status],
-                        ),
-                    ]
-                )
-            )
-        else:
-            unit = f" {reading['unit']}" if reading["unit"] else ""
-            metric_items.append(
-                dbc.ListGroupItem(f"{reading['metric']}: {reading['value']:.1f}{unit}")
-            )
+    metric_items = [_build_metric_item(reading) for _, reading in readings_for_device.sort_values("metric").iterrows()]
 
     last_seen = readings_for_device["time"].max() if not readings_for_device.empty else pd.NaT
 
     return dbc.Col(
         dbc.Card(
             [
-                dbc.CardHeader(device_row.get("name") or device_row["device_id"]),
+                dbc.CardHeader(
+                    [html.I(className="bi bi-cpu me-2"), device_row.get("name") or device_row["device_id"]],
+                    className="fw-semibold",
+                ),
                 dbc.ListGroup(metric_items, flush=True),
-                dbc.CardFooter(f"Vu {_format_last_seen(last_seen)}", className="text-muted small"),
+                dbc.CardFooter(
+                    [html.I(className="bi bi-clock me-1"), f"Vu {format_last_seen(last_seen)}"], className="text-muted small"
+                ),
             ],
             className="h-100",
         ),
         md=4,
         className="pb-3",
     )
-
-
-def _build_firmware_row(device_row):
-    device_id = device_row["device_id"]
-    ip_address = device_row.get("ip_address") or ""
-    ip_known = bool(ip_address)
-    children = [
-        html.Div(device_row.get("name") or device_id, className="fw-bold mb-2"),
-        dbc.Row(
-            [
-                dbc.Col(
-                    dbc.InputGroup(
-                        [
-                            dbc.InputGroupText("IP"),
-                            dbc.Input(
-                                id={"type": "device-ip-input", "device": device_id},
-                                value=ip_address,
-                                placeholder="192.168.1.50",
-                            ),
-                            dbc.Button(
-                                "Enregistrer",
-                                id={"type": "device-ip-save-btn", "device": device_id},
-                                color="secondary",
-                                n_clicks=0,
-                            ),
-                            dbc.Button(
-                                "🔄",
-                                id={"type": "device-ip-refresh-btn", "device": device_id},
-                                color="secondary",
-                                outline=True,
-                                n_clicks=0,
-                                title="Demander au device de republier son IP (get_status)",
-                            ),
-                        ]
-                    ),
-                    md=4,
-                ),
-                dbc.Col(
-                    dcc.Upload(
-                        id={"type": "ota-upload", "device": device_id},
-                        children=html.Div("Glisser un .bin ou cliquer pour choisir", className="small"),
-                        accept=".bin",
-                        className="border rounded p-2 text-center",
-                    ),
-                    md=5,
-                ),
-                dbc.Col(
-                    dbc.Button(
-                        "Envoyer",
-                        id={"type": "ota-send-btn", "device": device_id},
-                        color="warning",
-                        n_clicks=0,
-                        className="w-100",
-                        disabled=not ip_known,
-                    ),
-                    md=3,
-                ),
-            ],
-            className="g-2 align-items-center",
-        ),
-    ]
-    if not ip_known:
-        children.append(
-            dbc.FormText(
-                "IP inconnue pour ce device : cliquez 🔄 pour lui demander de republier son IP "
-                "(get_status), ou saisissez-la manuellement puis Enregistrer.",
-                className="d-block mt-2",
-            )
-        )
-    return dbc.Card(dbc.CardBody(children), className="mb-3")
 
 
 _DAY_LABELS = {1: "Lun", 2: "Mar", 3: "Mer", 4: "Jeu", 5: "Ven", 6: "Sam", 7: "Dim"}
@@ -361,7 +307,14 @@ def _format_conditions_summary(conditions_list):
             labels.append(f"pas de pluie ({condition.get('window_hours', 3)}h)")
         elif condition_type == "min_tank_pct":
             labels.append(f"cuve ≥ {condition.get('min_pct')}%")
+        elif condition_type == "max_soil_moisture":
+            sensor_count = len(condition.get("device_ids") or [])
+            labels.append(f"sol < {condition.get('max_pct')}% ({sensor_count} capteur{'s' if sensor_count > 1 else ''})")
     return labels
+
+
+def _build_soil_sensor_options():
+    return [{"label": s["name"], "value": s["device_id"]} for s in queries.get_soil_sensors()]
 
 
 def _valve_option_value(device_id, metric):
@@ -442,6 +395,16 @@ def _format_valves_triggered(valves_triggered):
     return ", ".join(f"{v['metric']} ({v['duration_s'] // 60}min)" for v in valves_triggered)
 
 
+def _current_valve_status(device_id, metric):
+    """(statut, direction) actuel d'une vanne, ("closed", None) si inconnue."""
+    valves = queries.get_valve_states()
+    match = valves[(valves["device_id"] == device_id) & (valves["metric"] == metric)] if not valves.empty else valves
+    if match.empty:
+        return "closed", None
+    row = match.iloc[-1]
+    return _valve_status(row["value"]), row.get("direction")
+
+
 def register_callbacks(app):
     @app.callback(
         Output("valve-command-feedback", "children"),
@@ -467,14 +430,19 @@ def register_callbacks(app):
                     duration_min = state["value"]
                     break
             duration_s = int(duration_min) * 60 if duration_min else None
+            extending = _is_opening(*_current_valve_status(device_id, metric))
             ok = mqtt_control.send_valve_command(device_id, metric, "open", duration_s)
             if ok and duration_s:
-                valve_timers.mark_opened(device_id, metric, duration_s)
-            message = (
-                f"Ouverture de {metric} ({device_id}) pour {duration_min} min envoyée."
-                if ok
-                else f"Échec de l'envoi de la commande d'ouverture pour {metric} ({device_id})."
-            )
+                if extending:
+                    valve_timers.mark_extended(device_id, metric, duration_s)
+                else:
+                    valve_timers.mark_opened(device_id, metric, duration_s)
+            if not ok:
+                message = f"Échec de l'envoi de la commande d'ouverture pour {metric} ({device_id})."
+            elif extending:
+                message = f"Prolongation de {metric} ({device_id}) de {duration_min} min envoyée."
+            else:
+                message = f"Ouverture de {metric} ({device_id}) pour {duration_min} min envoyée."
         else:
             ok = mqtt_control.send_valve_command(device_id, metric, "close")
             if ok:
@@ -507,6 +475,7 @@ def register_callbacks(app):
         Output({"type": "valve-countdown-wrap", "device": ALL, "metric": ALL}, "children"),
         Output({"type": "valve-open-btn", "device": ALL, "metric": ALL}, "disabled"),
         Output({"type": "valve-close-btn", "device": ALL, "metric": ALL}, "disabled"),
+        Output({"type": "valve-open-btn", "device": ALL, "metric": ALL}, "children"),
         Input("global-interval", "n_intervals"),
     )
     def update_valve_badges(_n):
@@ -539,14 +508,15 @@ def register_callbacks(app):
             status, _direction = status_of(oid)
             countdowns.append(_build_valve_countdown(oid["device"], oid["metric"], status))
 
-        # Boutons désactivés tant que la vanne est en transition (~15s) :
-        # évite d'envoyer une commande contradictoire pendant qu'elle bouge
-        # déjà. Ces props sont mises à jour en place (pas de reconstruction
-        # des boutons), donc pas de risque de perdre un clic.
-        open_disabled = [status_of(oid)[0] == "transition" for oid in open_btn_ids]
-        close_disabled = [status_of(oid)[0] == "transition" for oid in close_btn_ids]
+        # Boutons désactivés pendant une fermeture en cours (~15s) : évite
+        # d'envoyer une commande contradictoire pendant qu'elle bouge déjà.
+        # Ces props sont mises à jour en place (pas de reconstruction des
+        # boutons), donc pas de risque de perdre un clic.
+        open_disabled = [_valve_buttons_disabled(*status_of(oid)) for oid in open_btn_ids]
+        close_disabled = [_valve_buttons_disabled(*status_of(oid)) for oid in close_btn_ids]
+        open_labels = [_open_button_label(*status_of(oid)) for oid in open_btn_ids]
 
-        return badges, countdowns, open_disabled, close_disabled
+        return badges, countdowns, open_disabled, close_disabled, open_labels
 
     @app.callback(Output("tank-gauge", "children"), Input("global-interval", "n_intervals"))
     def update_tank_gauge(_n):
@@ -556,7 +526,10 @@ def register_callbacks(app):
                 f"Pas de mesure de niveau d'eau ({config.TANK_LEVEL_METRIC}) reçue pour le moment.",
                 color="secondary",
             )
-        return dcc.Graph(figure=_build_tank_gauge_figure(tank), config={"displayModeBar": False})
+        return dbc.Card(
+            dbc.CardBody(dcc.Graph(figure=_build_tank_gauge_figure(tank), config={"displayModeBar": False}), className="p-1"),
+            className="h-100",
+        )
 
     @app.callback(Output("rain-outlook", "children"), Input("global-interval", "n_intervals"))
     def update_rain_outlook(_n):
@@ -572,6 +545,11 @@ def register_callbacks(app):
             ],
             className="g-2 h-100",
         )
+
+    @app.callback(Output("soil-panel", "children"), Input("global-interval", "n_intervals"))
+    def update_soil_panel(_n):
+        rows = soil_panel.soil_sensor_rows(queries.get_devices(), queries.get_latest_readings())
+        return soil_panel.build_soil_panel(rows)
 
     @app.callback(Output("overview-cards", "children"), Input("global-interval", "n_intervals"))
     def update_overview(_n):
@@ -599,7 +577,10 @@ def register_callbacks(app):
             {"label": row.get("name") or row["device_id"], "value": row["device_id"]}
             for _, row in devices.iterrows()
         ]
-        metric_options = [{"label": m, "value": m} for m in queries.get_known_metrics()]
+        metric_options = [
+            {"label": m if metric_label(m) == m else f"{metric_label(m)} ({m})", "value": m}
+            for m in queries.get_known_metrics()
+        ]
         end_date = datetime.now(timezone.utc).date()
         start_date = end_date - timedelta(days=2)
         return device_options, metric_options, start_date, end_date
@@ -626,214 +607,6 @@ def register_callbacks(app):
         df = queries.get_history(devices, metrics, start, end)
         return _build_history_figure(df)
 
-    @app.callback(Output("weather-content", "children"), Input("weather-interval", "n_intervals"))
-    def update_weather(_n):
-        forecast = queries.get_weather_forecast()
-        observed = queries.get_weather_observed()
-
-        if forecast.empty and observed.empty:
-            return dbc.Alert(
-                "Pas encore de données météo (le service se met à jour toutes les 3h).",
-                color="warning",
-            )
-
-        children = []
-
-        if not forecast.empty:
-            fig = go.Figure()
-            # Groupé par (source, métrique) : AROME et ARPEGE se chevauchent
-            # sur les échéances proches, les mélanger dans une même trace
-            # donnerait une courbe qui va et vient entre les deux valeurs.
-            for (source, metric), group in forecast.groupby(["source", "metric"]):
-                group = group.sort_values("valid_time")
-                fig.add_trace(
-                    go.Scatter(
-                        x=group["valid_time"], y=group["value"], mode="lines", name=f"{source} · {metric}"
-                    )
-                )
-            fig.update_layout(
-                title="Prévisions (AROME / ARPEGE, via Open-Meteo)", margin=dict(l=40, r=20, t=40, b=40)
-            )
-            children.append(dcc.Graph(figure=fig))
-        else:
-            children.append(dbc.Alert("Pas encore de prévisions disponibles.", color="secondary"))
-
-        if not observed.empty:
-            rain = observed[observed["metric"] == "precipitation_mm"]
-            fig2 = go.Figure()
-            if not rain.empty:
-                fig2.add_trace(go.Bar(x=rain["time"], y=rain["value"], name="Précipitations (mm)"))
-            fig2.update_layout(title="Pluviométrie passée", margin=dict(l=40, r=20, t=40, b=40))
-            children.append(dcc.Graph(figure=fig2))
-
-        return children
-
-    @app.callback(Output("firmware-rows", "children"), Input("tabs", "active_tab"))
-    def update_firmware_rows(active_tab):
-        if active_tab != "firmware":
-            return no_update
-        devices = queries.get_devices()
-        if devices.empty:
-            return dbc.Alert("Aucun appareil n'a encore envoyé de données.", color="info")
-        return [_build_firmware_row(row) for _, row in devices.iterrows()]
-
-    @app.callback(
-        Output("ota-feedback", "children", allow_duplicate=True),
-        Input({"type": "device-ip-save-btn", "device": ALL}, "n_clicks"),
-        State({"type": "device-ip-input", "device": ALL}, "value"),
-        prevent_initial_call=True,
-    )
-    def save_device_ip(_clicks, _values):
-        triggered_id = ctx.triggered_id
-        if not triggered_id or not ctx.triggered or not ctx.triggered[0]["value"]:
-            return no_update
-
-        device_id = triggered_id["device"]
-        ip_value = None
-        for state in ctx.states_list[0]:
-            if state["id"]["device"] == device_id:
-                ip_value = state["value"]
-                break
-
-        if not ota_client.is_valid_ip(ip_value or ""):
-            return dbc.Alert(
-                f"Adresse IP invalide pour {device_id}.", color="danger", dismissable=True, duration=6000
-            )
-
-        queries.set_device_ip(device_id, ip_value)
-        return dbc.Alert(
-            f"IP enregistrée pour {device_id} : {ip_value}", color="success", dismissable=True, duration=4000
-        )
-
-    @app.callback(
-        Output("ota-feedback", "children", allow_duplicate=True),
-        Input({"type": "device-ip-refresh-btn", "device": ALL}, "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def refresh_device_ip(_clicks):
-        triggered_id = ctx.triggered_id
-        if not triggered_id or not ctx.triggered or not ctx.triggered[0]["value"]:
-            return no_update
-
-        device_id = triggered_id["device"]
-        mqtt_control.send_get_status(device_id)
-        return dbc.Alert(
-            f"Demande envoyée à {device_id} : son IP réapparaîtra ici sous peu (revenez sur cet onglet).",
-            color="info",
-            dismissable=True,
-            duration=6000,
-        )
-
-    @app.callback(
-        Output("ota-confirm-modal", "is_open", allow_duplicate=True),
-        Output("ota-modal-body", "children"),
-        Output("ota-pending-upload", "data"),
-        Output("ota-feedback", "children", allow_duplicate=True),
-        Input({"type": "ota-send-btn", "device": ALL}, "n_clicks"),
-        State({"type": "ota-upload", "device": ALL}, "contents"),
-        State({"type": "ota-upload", "device": ALL}, "filename"),
-        State({"type": "device-ip-input", "device": ALL}, "value"),
-        prevent_initial_call=True,
-    )
-    def open_ota_confirm(_clicks, _contents_list, _filenames_list, _ips_list):
-        triggered_id = ctx.triggered_id
-        if not triggered_id or not ctx.triggered or not ctx.triggered[0]["value"]:
-            return no_update, no_update, no_update, no_update
-
-        device_id = triggered_id["device"]
-
-        def _find(state_index):
-            for state in ctx.states_list[state_index]:
-                if state["id"]["device"] == device_id:
-                    return state["value"]
-            return None
-
-        contents = _find(0)
-        filename = _find(1)
-        ip_address = _find(2)
-
-        if not contents or not filename:
-            return (
-                no_update,
-                no_update,
-                no_update,
-                dbc.Alert(
-                    f"Sélectionnez d'abord un fichier .bin pour {device_id}.",
-                    color="warning",
-                    dismissable=True,
-                    duration=6000,
-                ),
-            )
-        if not ota_client.is_valid_ip(ip_address or ""):
-            return (
-                no_update,
-                no_update,
-                no_update,
-                dbc.Alert(
-                    f"Adresse IP manquante ou invalide pour {device_id}. Enregistrez-la d'abord.",
-                    color="warning",
-                    dismissable=True,
-                    duration=6000,
-                ),
-            )
-
-        body = html.Div(
-            [
-                html.P(f"Envoyer {filename} vers {device_id} ({ip_address}) ?"),
-                html.P(
-                    "Le device va redémarrer et appliquer le nouveau firmware. "
-                    "Toute vanne actuellement ouverte sera fermée pendant le redémarrage.",
-                    className="text-danger mb-0",
-                ),
-            ]
-        )
-        pending = {"device_id": device_id, "ip_address": ip_address, "filename": filename, "contents": contents}
-        return True, body, pending, no_update
-
-    @app.callback(
-        Output("ota-confirm-modal", "is_open", allow_duplicate=True),
-        Input("ota-cancel-btn", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def cancel_ota(_n):
-        return False
-
-    @app.callback(
-        Output("ota-feedback", "children", allow_duplicate=True),
-        Output("ota-confirm-modal", "is_open", allow_duplicate=True),
-        Output("ota-confirm-btn", "disabled"),
-        Input("ota-confirm-btn", "n_clicks"),
-        State("ota-pending-upload", "data"),
-        prevent_initial_call=True,
-    )
-    def confirm_ota(_n, pending):
-        if not pending:
-            return no_update, False, False
-
-        device_id = pending["device_id"]
-        ip_address = pending["ip_address"]
-        filename = pending["filename"]
-        contents = pending["contents"]
-
-        try:
-            _header, b64data = contents.split(",", 1)
-            data = base64.b64decode(b64data)
-        except Exception:
-            return (
-                dbc.Alert(f"Fichier illisible pour {device_id}.", color="danger", dismissable=True, duration=6000),
-                False,
-                False,
-            )
-
-        ok, message = ota_client.send_firmware(device_id, ip_address, data)
-        alert = dbc.Alert(
-            f"{filename} → {device_id} ({ip_address}) : {message}",
-            color="success" if ok else "danger",
-            dismissable=True,
-            duration=10000,
-        )
-        return alert, False, False
-
     @app.callback(
         Output("program-modal", "is_open", allow_duplicate=True),
         Output("program-modal-title", "children"),
@@ -848,6 +621,10 @@ def register_callbacks(app):
         Output("program-form-cond-rain-hours", "value"),
         Output("program-form-cond-tank-enabled", "value"),
         Output("program-form-cond-tank-pct", "value"),
+        Output("program-form-cond-soil-enabled", "value"),
+        Output("program-form-cond-soil-pct", "value"),
+        Output("program-form-cond-soil-sensors", "value"),
+        Output("program-form-cond-soil-sensors", "options"),
         Output("program-form-error", "children", allow_duplicate=True),
         Input("new-program-btn", "n_clicks"),
         Input({"type": "program-edit-btn", "program_id": ALL}, "n_clicks"),
@@ -858,6 +635,7 @@ def register_callbacks(app):
             raise PreventUpdate
 
         valve_options = _build_valve_options()
+        soil_sensor_options = _build_soil_sensor_options()
         no_valves_warning = (
             dbc.Alert(
                 "Aucune vanne détectée pour l'instant : elle doit avoir déjà envoyé son état "
@@ -885,6 +663,10 @@ def register_callbacks(app):
                 3,
                 True,
                 10,
+                False,
+                config.DEFAULT_SOIL_MAX_PCT,
+                [],
+                soil_sensor_options,
                 no_valves_warning,
             )
 
@@ -895,6 +677,7 @@ def register_callbacks(app):
         conditions_by_type = {c["type"]: c for c in (program["conditions"] or [])}
         rain = conditions_by_type.get("no_rain_forecast")
         tank = conditions_by_type.get("min_tank_pct")
+        soil = conditions_by_type.get("max_soil_moisture")
         valve_values = [_valve_option_value(v["device_id"], v["metric"]) for v in program["valves"]]
 
         return (
@@ -911,6 +694,10 @@ def register_callbacks(app):
             rain.get("window_hours", 3) if rain else 3,
             tank is not None,
             tank.get("min_pct", 10) if tank else 10,
+            soil is not None,
+            soil.get("max_pct", config.DEFAULT_SOIL_MAX_PCT) if soil else config.DEFAULT_SOIL_MAX_PCT,
+            soil.get("device_ids", []) if soil else [],
+            soil_sensor_options,
             no_valves_warning,
         )
 
@@ -938,6 +725,9 @@ def register_callbacks(app):
         State("program-form-cond-rain-hours", "value"),
         State("program-form-cond-tank-enabled", "value"),
         State("program-form-cond-tank-pct", "value"),
+        State("program-form-cond-soil-enabled", "value"),
+        State("program-form-cond-soil-pct", "value"),
+        State("program-form-cond-soil-sensors", "value"),
         State("programs-version", "data"),
         prevent_initial_call=True,
     )
@@ -953,6 +743,9 @@ def register_callbacks(app):
         rain_hours,
         tank_enabled,
         tank_pct,
+        soil_enabled,
+        soil_pct,
+        soil_sensors,
         version,
     ):
         if not n_clicks:
@@ -969,6 +762,8 @@ def register_callbacks(app):
             errors.append("l'heure de déclenchement est obligatoire")
         if not duration_min or duration_min <= 0:
             errors.append("la durée doit être positive")
+        if soil_enabled and not soil_sensors:
+            errors.append("choisissez au moins un capteur de sol (ou désactivez la condition)")
 
         if errors:
             # A l'intérieur de la modale (pas dans programs-feedback, qui est
@@ -989,6 +784,15 @@ def register_callbacks(app):
             )
         if tank_enabled:
             conditions_list.append({"type": "min_tank_pct", "min_pct": int(tank_pct or 0)})
+        if soil_enabled:
+            conditions_list.append(
+                {
+                    "type": "max_soil_moisture",
+                    "max_pct": int(soil_pct if soil_pct is not None else config.DEFAULT_SOIL_MAX_PCT),
+                    "device_ids": list(soil_sensors),
+                    "max_age_hours": config.SOIL_STALE_HOURS,
+                }
+            )
 
         valves = [tuple(v.split("::", 1)) for v in valve_values]
         hour, minute = (int(part) for part in start_time_str.split(":")[:2])

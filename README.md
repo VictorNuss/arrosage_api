@@ -16,6 +16,9 @@ prévisions Météo-France (modèle AROME) et la pluviométrie passée.
 | `dashboard`   | Application Dash (port 8050) : vue d'ensemble, historique, météo |
 | `weather`     | Récupère prévisions AROME/ARPEGE et pluvio passée (DPClim)       |
 | `scheduler`   | Programmes d'arrosage automatiques (planning + conditions)       |
+| `device-sim-*` | *Optionnel* (profil `sim`) : devices ESP32 simulés `sim-jardin`/`sim-serre`, pour tester sans matériel |
+| `soil-sensor-sim` | *Optionnel* (profil `sim`) : capteurs de sol Zigbee simulés `sim-sol-potager`/`sim-sol-serre` |
+| `zigbee2mqtt` | *Optionnel* (profil `zigbee`) : passerelle vers les capteurs Zigbee (voir "Capteurs Zigbee") |
 
 ## Démarrage
 
@@ -49,10 +52,11 @@ Chaque service a sa propre suite `pytest` (dépendance de dev, jamais
 installée dans les images de prod grâce à `uv sync --no-dev`) :
 
 ```bash
-cd ingest && uv run pytest -q     # parsing/coercion du contrat MQTT état
+cd ingest && uv run pytest -q     # parsing/coercion du contrat MQTT état, traduction Zigbee2MQTT
 cd dashboard && uv run pytest -q  # commandes vannes, cache live, OTA, météo, programmes
 cd weather && uv run pytest -q    # extraction des séries Open-Meteo
 cd scheduler && uv run pytest -q  # évaluation des conditions, déclenchement des programmes
+uv run --no-project --python 3.12 --with paho-mqtt==2.1.0 --with pytest pytest esp32 -q  # device simulé
 ```
 
 Ce sont des tests unitaires (pas besoin de Docker/base/broker) : les accès
@@ -60,6 +64,59 @@ réseau (`requests`, client MQTT) sont mockés. Ils couvrent surtout la
 logique qui a déjà produit de vraies régressions pendant le développement —
 dédoublonnage AROME/ARPEGE, format du contrat de commande, coercion des
 valeurs de vannes — pour éviter de les réintroduire.
+
+## Capteurs Zigbee (humidité du sol...)
+
+Des capteurs Zigbee du commerce (ex : testeur de sol Tuya "5 en 1" :
+humidité du sol, température, humidité de l'air, luminosité, fertilité) peuvent
+s'ajouter aux ESP32, autant que voulu : un capteur = un appareil dans
+l'appli.
+
+**Matériel** : un coordinateur Zigbee, clé USB (Sonoff ZBDongle-E/-P...) ou
+coordinateur réseau (SMLIGHT SLZB-06...). Vérifier que le modèle exact du
+capteur figure dans la [liste des appareils supportés](https://www.zigbee2mqtt.io/supported-devices/).
+Dehors, la portée Zigbee est limitée : tout appareil Zigbee sur secteur
+(prise connectée...) sert de relais.
+
+**Mise en route** :
+
+```bash
+mkdir -p zigbee2mqtt/data
+cp zigbee2mqtt/configuration.example.yaml zigbee2mqtt/data/configuration.yaml
+# adapter serial.port/adapter (clé USB ou coordinateur réseau), et ZIGBEE_ADAPTER dans .env
+docker compose --profile zigbee up -d
+```
+
+Puis, dans l'interface Zigbee2MQTT (http://<serveur>:8080) : "Permit join",
+appairer le capteur, et le **renommer** (ex : `sol-potager`, sans `/`) — ce
+nom devient son identifiant dans l'appli.
+
+**Fonctionnement** : Zigbee2MQTT publie l'état de chaque capteur en un seul
+JSON sur `zigbee2mqtt/<nom>`. `ingest` s'y abonne et le republie dans le
+contrat device habituel, un topic retenu par mesure
+(`arrosage/<nom>/etat/<metric>`, voir [`ingest/app/zigbee.py`](ingest/app/zigbee.py)) :
+stockage, cache live du dashboard et historique fonctionnent sans autre
+changement.
+
+| Champ Zigbee2MQTT | Métrique | Unité |
+|---|---|---|
+| `soil_moisture` | `humidity_pct` (même clé que les ESP32) | % |
+| `temperature` | `temperature_c` | °C |
+| `humidity` | `air_humidity_pct_rh` | %RH |
+| `illuminance_lux` / `illuminance` | `illuminance_lux` | lx |
+| `soil_fertility` / `fertility` / `soil_conductivity` | `fertility_us_cm` | µS/cm |
+| `battery` | `battery_pct` | % |
+| `linkquality` | `zigbee_lqi` | — |
+
+Les autres champs sont ignorés. `ZIGBEE2MQTT_BASE_TOPIC` (`.env`) doit
+correspondre au `mqtt.base_topic` de Zigbee2MQTT ; vide, l'intégration est
+désactivée. Ces capteurs sur pile ne publient qu'environ toutes les 30 à
+60 min, et Zigbee2MQTT ne retient pas leurs messages : une mesure publiée
+pendant un redémarrage d'`ingest` est perdue (la suivante arrive normalement).
+
+Pour tester sans matériel, `docker compose --profile sim up -d` lance aussi
+`soil-sensor-sim` ([`zigbee2mqtt/soil_sensor_simulator.py`](zigbee2mqtt/soil_sensor_simulator.py)),
+qui publie comme Zigbee2MQTT ; le sol s'humidifie quand une vanne est ouverte.
 
 ## Contrat device (MQTT + OTA)
 
@@ -88,10 +145,17 @@ Voir [`esp32/README.md`](esp32/README.md) pour le contrat complet et à jour
   chaque connexion MQTT du device et en réponse à un `get_status`. Sert à
   cibler automatiquement le bon device pour l'OTA (voir plus bas), sans
   mapping à tenir à la main.
+- Version firmware (device → serveur) : clé spéciale
+  `arrosage/<device_id>/etat/fw_version`, `{"value": "v1.2.0"}` (chaîne
+  libre — alimente `devices.fw_version`), même cycle de publication que
+  `ip`. Affichée dans l'onglet Firmware, avant et après une mise à jour.
 - OTA (serveur → device, HTTP local, pas MQTT) : `POST http://<ip>/api/ota`
   avec le `.bin` brut — voir onglet **Firmware** du dashboard plus bas.
 
-Test rapide sans matériel :
+Test sans matériel : un device simulé complet (capteurs, vannes, OTA) se
+lance avec `docker compose --profile sim up -d --build` — voir
+[`esp32/README.md`](esp32/README.md) > "Tester sans matériel". Ou, au plus
+simple, publier des messages à la main :
 
 ```bash
 mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/water_level_cm -m '{"value":34.5}'
@@ -109,7 +173,9 @@ psql -U arrosage -d arrosage -f - < db/init/00N_fichier.sql`). Il crée :
 - `devices` : appareils connus (auto-alimentée par `ingest`), avec
   `ip_address` (IP locale fixe, découverte automatiquement via la clé MQTT
   `ip` — voir plus haut — et modifiable manuellement en repli depuis
-  l'onglet Firmware du dashboard, utilisée pour l'OTA),
+  l'onglet Firmware du dashboard, utilisée pour l'OTA) et `fw_version`
+  (version du firmware en cours, clé MQTT `fw_version`, migration
+  `004_add_device_fw_version.sql`),
 - `sensor_readings` : hypertable des mesures (une ligne par métrique),
   compressée au-delà de 7 jours, avec un agrégat continu horaire
   (`sensor_readings_hourly`) utilisé par le dashboard pour les longues
@@ -192,8 +258,10 @@ Puis cinq onglets :
 
 - **Vue d'ensemble** : jauge de niveau de la cuve (seuil "pleine" configurable
   via `TANK_HEIGHT_FULL_CM`), indicateurs de pluie prévue (3h / 2 jours), et
-  une carte par appareil avec ses dernières valeurs connues. Rafraîchi
-  toutes les 15s.
+  un panneau "Humidité du sol" (une jauge par capteur de sol, ESP32 ou
+  Zigbee, avec alerte de pile faible et signalement des mesures de plus de
+  6 h), et une carte par appareil avec ses dernières valeurs connues.
+  Rafraîchi toutes les 15s.
 - **Historique** : sélection d'appareils/métriques + plage de dates
   (utilise automatiquement l'agrégat horaire au-delà de 2 jours pour rester
   rapide). Les vannes s'affichent séparément des courbes de capteurs, en
@@ -201,17 +269,19 @@ Puis cinq onglets :
 - **Météo** : prévisions AROME/ARPEGE, cumul de pluie passé, et une carte
   radar interactive (widget [Windy](https://www.windy.com), gratuit, sans
   clé API — centrée sur `WEATHER_LAT`/`WEATHER_LON`).
-- **Firmware** : mise à jour OTA par device. L'IP locale fixe de chaque
-  device est découverte automatiquement (clé MQTT `ip`, republiée à chaque
-  connexion et via `get_status`) et pré-remplie ; le bouton "Enregistrer"
-  reste disponible en repli pour la saisir/corriger manuellement. Tant
-  qu'elle est inconnue, le bouton "Envoyer" reste grisé — un bouton 🔄 permet
-  de forcer un `get_status` pour redemander sa republication. Choisir
-  ensuite un fichier `.bin` et cliquer "Envoyer" — une confirmation
-  s'affiche avant l'envoi effectif (le device va redémarrer). Le dashboard
-  relaie le fichier en `POST` vers `http://<ip>/api/ota` (voir
+- **Firmware** : mise à jour OTA. Choisir l'appareil dans la liste
+  déroulante (nom, IP et version firmware, découvertes automatiquement via
+  les clés MQTT `ip`/`fw_version`), déposer un fichier `.bin`, puis
+  "Envoyer la mise à jour" — une confirmation (avec la version actuelle)
+  s'affiche avant l'envoi effectif (le device va redémarrer). Le bouton
+  reste grisé tant que l'IP du device ou le fichier manque. "Actualiser"
+  force un `get_status` pour redemander IP et version ; "Saisir l'IP
+  manuellement" reste disponible en repli (firmware qui ne publie pas encore
+  son IP). Après un envoi réussi, la liste se recharge ~30s plus tard pour
+  afficher la nouvelle version republiée par le device. Le dashboard relaie
+  le fichier en `POST` vers `http://<ip>/api/ota` (voir
   [`esp32/README.md`](esp32/README.md) > "Mise à jour firmware"). Un seul
-  envoi à la fois par device (bouton désactivé pendant l'upload).
+  envoi à la fois par device. Un tableau récapitule les appareils connus.
 - **Programmes** : création/édition de programmes d'arrosage automatiques
   (jours, heure de déclenchement, durée, vannes, conditions), et historique
   des exécutions récentes (exécuté/ignoré + raison). Le dashboard n'écrit que
@@ -240,6 +310,13 @@ migration) :
 - `min_tank_pct` (`min_pct`) : n'arrose pas si le niveau de la cuve est sous
   ce seuil. **Si aucune lecture de niveau n'est encore connue, le programme
   est bloqué par sécurité** plutôt que de supposer la cuve pleine.
+- `max_soil_moisture` (`device_ids`, `max_pct`, `max_age_hours`) : n'arrose
+  pas si la **moyenne** des dernières humidités du sol (`humidity_pct`) des
+  capteurs choisis atteint `max_pct`. Seules les mesures de moins de
+  `max_age_hours` (6 h depuis le dashboard) comptent ; **sans aucune mesure
+  récente (pile vide, hors de portée...), le programme arrose quand même**
+  — l'inverse de la cuve : mieux vaut un arrosage de trop qu'un potager qui
+  sèche à cause d'un capteur muet.
 
 Pas de condition "éviter une plage horaire" : l'heure de déclenchement du
 programme suffit à choisir quand il tourne, une condition séparée pour ça
@@ -265,6 +342,12 @@ même minute ou redémarre au mauvais moment.
 - Toutes les vannes d'un même programme partagent sa durée par défaut ; une
   durée par vanne est prévue dans le schéma (`watering_program_valves.duration_s`)
   mais pas encore exposée dans le formulaire du dashboard.
+- La condition d'humidité du sol porte sur tout le programme (moyenne des
+  capteurs choisis), pas sur chaque vanne : pour des zones au sol différent,
+  faire un programme par zone.
+- Les capteurs Zigbee apparaissent aussi dans l'onglet Firmware (sans IP,
+  donc sans OTA possible), et reçoivent comme les ESP32 le `get_status` de
+  resynchronisation d'`ingest`, sans effet (personne n'écoute ce topic).
 
 ## Sécurité
 

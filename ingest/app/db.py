@@ -44,11 +44,10 @@ def ensure_device(engine, device_id):
         conn.execute(stmt)
 
 
-def update_device_ip(engine, device_id, ip_address):
+def update_device_info(engine, device_id, fields):
+    """fields: {colonne de devices: valeur}, ex {"ip_address": "192.168.1.50"}."""
     with engine.begin() as conn:
-        conn.execute(
-            devices.update().where(devices.c.device_id == device_id).values(ip_address=ip_address)
-        )
+        conn.execute(devices.update().where(devices.c.device_id == device_id).values(**fields))
 
 
 def insert_readings(engine, rows):

@@ -32,6 +32,7 @@ def get_devices() -> pd.DataFrame:
         devices.c.lat,
         devices.c.lon,
         devices.c.ip_address,
+        devices.c.fw_version,
     ).order_by(devices.c.device_id)
     with engine.connect() as conn:
         return pd.read_sql_query(stmt, conn)
@@ -161,6 +162,23 @@ def get_weather_forecast() -> pd.DataFrame:
         return pd.read_sql_query(stmt, conn)
 
 
+# AROME (1,3 km, ~2 jours) est plus fin qu'ARPEGE (~4 jours) : là où les deux
+# couvrent la même échéance, on garde AROME.
+_FORECAST_SOURCE_PRIORITY = {"AROME": 0, "ARPEGE": 1}
+
+
+def prefer_finest_source(forecast: pd.DataFrame) -> pd.DataFrame:
+    """Une seule valeur par (échéance, métrique) : AROME en priorité, ARPEGE
+    au-delà de l'horizon d'AROME. Évite de compter deux fois la même pluie
+    ou de tracer une courbe qui oscille entre les deux modèles."""
+    if forecast.empty:
+        return forecast
+    ordered = forecast.sort_values(
+        "source", key=lambda s: s.map(_FORECAST_SOURCE_PRIORITY).fillna(99), kind="stable"
+    )
+    return ordered.drop_duplicates(subset=["valid_time", "metric"], keep="first").sort_values("valid_time")
+
+
 def get_weather_observed(days: int = 30) -> pd.DataFrame:
     cutoff = func.now() - func.make_interval(0, 0, 0, days)
     stmt = (
@@ -199,17 +217,13 @@ def get_rain_outlook() -> dict | None:
     run) : on peut donc simplement sommer les valeurs sur la fenêtre voulue.
     AROME et ARPEGE se chevauchent sur les échéances proches ; on garde
     AROME en priorité (plus fin) pour ne pas compter la même pluie deux
-    fois. Renvoie None si aucune prévision n'est disponible (service météo
-    pas encore alimenté).
+    fois (voir prefer_finest_source). Renvoie None si aucune prévision n'est
+    disponible (service météo pas encore alimenté).
     """
     forecast = get_weather_forecast()
-    precip = forecast[forecast["metric"] == "precipitation_mm"]
+    precip = prefer_finest_source(forecast[forecast["metric"] == "precipitation_mm"])
     if precip.empty:
         return None
-
-    source_priority = {"AROME": 0, "ARPEGE": 1}
-    precip = precip.sort_values("source", key=lambda s: s.map(source_priority).fillna(99))
-    precip = precip.drop_duplicates(subset="valid_time", keep="first")
 
     now = datetime.now(timezone.utc)
 
@@ -230,6 +244,20 @@ def get_known_valves() -> list[dict]:
     )
     with engine.connect() as conn:
         return pd.read_sql_query(stmt, conn).to_dict("records")
+
+
+def get_soil_sensors() -> list[dict]:
+    """Appareils ayant déjà publié une humidité du sol, avec leur nom :
+    [{"device_id": ..., "name": ...}], triés par nom."""
+    stmt = (
+        select(sensor_readings.c.device_id, func.coalesce(devices.c.name, sensor_readings.c.device_id).label("name"))
+        .select_from(sensor_readings.outerjoin(devices, devices.c.device_id == sensor_readings.c.device_id))
+        .where(sensor_readings.c.metric == config.SOIL_MOISTURE_METRIC)
+        .distinct()
+    )
+    with engine.connect() as conn:
+        rows = pd.read_sql_query(stmt, conn).to_dict("records")
+    return sorted(rows, key=lambda r: (r["name"], r["device_id"]))
 
 
 def get_programs() -> list[dict]:

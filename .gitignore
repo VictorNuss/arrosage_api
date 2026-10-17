@@ -1,3 +1,4 @@
 .env
 __pycache__/
 *.pyc
+zigbee2mqtt/data/

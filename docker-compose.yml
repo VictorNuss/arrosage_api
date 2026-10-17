@@ -46,6 +46,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      ZIGBEE2MQTT_BASE_TOPIC: ${ZIGBEE2MQTT_BASE_TOPIC:-zigbee2mqtt}
       TZ: ${TZ}
     depends_on:
       timescaledb:
@@ -112,6 +113,77 @@ services:
     depends_on:
       timescaledb:
         condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+
+  # Devices ESP32 simulés (esp32/device_simulator.py), pour tester sans
+  # matériel. Désactivés par défaut : docker compose --profile sim up -d
+  # Un service par device, avec un device_id fixe : il reste le même d'un
+  # rebuild à l'autre (pas de devices fantômes qui s'accumulent en base).
+  # L'IP du conteneur est détectée et publiée via la clé MQTT "ip". Pour un
+  # device de plus, copier un bloc en changeant le nom et SIM_DEVICE_ID.
+  device-sim-jardin: &device-sim
+    profiles: ["sim"]
+    build:
+      context: ./esp32
+      dockerfile: Dockerfile.simulator
+    environment: &device-sim-env
+      SIM_DEVICE_ID: sim-jardin
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      MQTT_USERNAME: ${MQTT_USERNAME}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+      SIM_TANK_HEIGHT_CM: ${TANK_HEIGHT_FULL_CM}
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+
+  device-sim-serre:
+    <<: *device-sim
+    environment:
+      <<: *device-sim-env
+      SIM_DEVICE_ID: sim-serre
+
+  # Capteurs de sol Zigbee simulés (zigbee2mqtt/soil_sensor_simulator.py) :
+  # publient comme Zigbee2MQTT, sans dongle. Même profil que les ESP32
+  # simulés : docker compose --profile sim up -d
+  soil-sensor-sim:
+    profiles: ["sim"]
+    build:
+      context: ./zigbee2mqtt
+      dockerfile: Dockerfile.simulator
+    environment:
+      SIM_SOIL_SENSORS: sim-sol-potager,sim-sol-serre
+      SIM_SOIL_PERIOD_S: 30
+      ZIGBEE2MQTT_BASE_TOPIC: ${ZIGBEE2MQTT_BASE_TOPIC:-zigbee2mqtt}
+      TZ: ${TZ}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      MQTT_USERNAME: ${MQTT_USERNAME}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+
+  # Passerelle Zigbee (capteurs de sol...), voir README "Capteurs Zigbee".
+  # Désactivée par défaut (il faut un coordinateur Zigbee) :
+  #   docker compose --profile zigbee up -d
+  zigbee2mqtt:
+    profiles: ["zigbee"]
+    image: koenkk/zigbee2mqtt:latest
+    restart: unless-stopped
+    volumes:
+      - ./zigbee2mqtt/data:/app/data
+      - /run/udev:/run/udev:ro
+    # Clé USB : chemin côté hôte (ls -l /dev/serial/by-id/ pour un nom
+    # stable). Avec un coordinateur réseau (SLZB-06...), supprimer ce bloc.
+    devices:
+      - ${ZIGBEE_ADAPTER:-/dev/ttyACM0}:/dev/ttyACM0
+    ports:
+      - "${ZIGBEE2MQTT_FRONTEND_PORT:-8080}:8080"
+    environment:
+      TZ: ${TZ}
+    depends_on:
       mosquitto:
         condition: service_healthy
 
