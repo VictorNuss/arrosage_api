@@ -162,6 +162,23 @@ def get_weather_forecast() -> pd.DataFrame:
         return pd.read_sql_query(stmt, conn)
 
 
+# AROME (1,3 km, ~2 jours) est plus fin qu'ARPEGE (~4 jours) : là où les deux
+# couvrent la même échéance, on garde AROME.
+_FORECAST_SOURCE_PRIORITY = {"AROME": 0, "ARPEGE": 1}
+
+
+def prefer_finest_source(forecast: pd.DataFrame) -> pd.DataFrame:
+    """Une seule valeur par (échéance, métrique) : AROME en priorité, ARPEGE
+    au-delà de l'horizon d'AROME. Évite de compter deux fois la même pluie
+    ou de tracer une courbe qui oscille entre les deux modèles."""
+    if forecast.empty:
+        return forecast
+    ordered = forecast.sort_values(
+        "source", key=lambda s: s.map(_FORECAST_SOURCE_PRIORITY).fillna(99), kind="stable"
+    )
+    return ordered.drop_duplicates(subset=["valid_time", "metric"], keep="first").sort_values("valid_time")
+
+
 def get_weather_observed(days: int = 30) -> pd.DataFrame:
     cutoff = func.now() - func.make_interval(0, 0, 0, days)
     stmt = (
@@ -200,17 +217,13 @@ def get_rain_outlook() -> dict | None:
     run) : on peut donc simplement sommer les valeurs sur la fenêtre voulue.
     AROME et ARPEGE se chevauchent sur les échéances proches ; on garde
     AROME en priorité (plus fin) pour ne pas compter la même pluie deux
-    fois. Renvoie None si aucune prévision n'est disponible (service météo
-    pas encore alimenté).
+    fois (voir prefer_finest_source). Renvoie None si aucune prévision n'est
+    disponible (service météo pas encore alimenté).
     """
     forecast = get_weather_forecast()
-    precip = forecast[forecast["metric"] == "precipitation_mm"]
+    precip = prefer_finest_source(forecast[forecast["metric"] == "precipitation_mm"])
     if precip.empty:
         return None
-
-    source_priority = {"AROME": 0, "ARPEGE": 1}
-    precip = precip.sort_values("source", key=lambda s: s.map(source_priority).fillna(99))
-    precip = precip.drop_duplicates(subset="valid_time", keep="first")
 
     now = datetime.now(timezone.utc)
 

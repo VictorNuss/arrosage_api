@@ -593,48 +593,6 @@ def register_callbacks(app):
         df = queries.get_history(devices, metrics, start, end)
         return _build_history_figure(df)
 
-    @app.callback(Output("weather-content", "children"), Input("weather-interval", "n_intervals"))
-    def update_weather(_n):
-        forecast = queries.get_weather_forecast()
-        observed = queries.get_weather_observed()
-
-        if forecast.empty and observed.empty:
-            return dbc.Alert(
-                "Pas encore de données météo (le service se met à jour toutes les 3h).",
-                color="warning",
-            )
-
-        children = []
-
-        if not forecast.empty:
-            fig = go.Figure()
-            # Groupé par (source, métrique) : AROME et ARPEGE se chevauchent
-            # sur les échéances proches, les mélanger dans une même trace
-            # donnerait une courbe qui va et vient entre les deux valeurs.
-            for (source, metric), group in forecast.groupby(["source", "metric"]):
-                group = group.sort_values("valid_time")
-                fig.add_trace(
-                    go.Scatter(
-                        x=group["valid_time"], y=group["value"], mode="lines", name=f"{source} · {metric}"
-                    )
-                )
-            fig.update_layout(
-                title="Prévisions (AROME / ARPEGE, via Open-Meteo)", margin=dict(l=40, r=20, t=40, b=40)
-            )
-            children.append(dcc.Graph(figure=fig))
-        else:
-            children.append(dbc.Alert("Pas encore de prévisions disponibles.", color="secondary"))
-
-        if not observed.empty:
-            rain = observed[observed["metric"] == "precipitation_mm"]
-            fig2 = go.Figure()
-            if not rain.empty:
-                fig2.add_trace(go.Bar(x=rain["time"], y=rain["value"], name="Précipitations (mm)"))
-            fig2.update_layout(title="Pluviométrie passée", margin=dict(l=40, r=20, t=40, b=40))
-            children.append(dcc.Graph(figure=fig2))
-
-        return children
-
     @app.callback(
         Output("program-modal", "is_open", allow_duplicate=True),
         Output("program-modal-title", "children"),
