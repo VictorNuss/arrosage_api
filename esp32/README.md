@@ -206,14 +206,14 @@ IP de conteneur est joignable par le dashboard, sur le port 80 qu'il
 utilise toujours (il n'accepte qu'une IPv4 nue, sans `:port`).
 
 ```bash
-docker compose --profile sim up -d --build                         # 1 device
-docker compose --profile sim up -d --build --scale device-sim=3    # 3 devices
-docker compose --profile sim logs -f device-sim
+docker compose --profile sim up -d --build     # sim-jardin + sim-serre
+docker compose --profile sim logs -f device-sim-jardin
 ```
 
-Le `device_id` vaut `sim-<nom d'hôte du conteneur>` (fixable avec
-`SIM_DEVICE_ID` pour un device unique). Autres réglages par variable
-d'environnement ou option : `SIM_FW_VERSION` (`v0.0.0-sim`),
+Chaque device simulé est un service de `docker-compose.yml` avec un
+`SIM_DEVICE_ID` fixe (stable d'un rebuild à l'autre) ; pour en ajouter un,
+copier le bloc `device-sim-serre` en changeant son nom et son
+`SIM_DEVICE_ID`. Autres réglages par variable d'environnement ou option : `SIM_FW_VERSION` (`v0.0.0-sim`),
 `SIM_TRANSITION_DELAY_S` (15), `SIM_SENSOR_PERIOD_S` (10),
 `SIM_REBOOT_DELAY_S` (3) — voir `python esp32/device_simulator.py --help`.
 

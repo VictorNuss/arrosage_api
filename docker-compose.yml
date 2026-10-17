@@ -115,16 +115,19 @@ services:
       mosquitto:
         condition: service_healthy
 
-  # Device ESP32 simulé (esp32/device_simulator.py), pour tester sans
-  # matériel. Désactivé par défaut : docker compose --profile sim up -d
-  # (ajouter --scale device-sim=3 pour plusieurs devices). device_id dérivé
-  # du nom d'hôte du conteneur, IP détectée et publiée via la clé MQTT "ip".
-  device-sim:
+  # Devices ESP32 simulés (esp32/device_simulator.py), pour tester sans
+  # matériel. Désactivés par défaut : docker compose --profile sim up -d
+  # Un service par device, avec un device_id fixe : il reste le même d'un
+  # rebuild à l'autre (pas de devices fantômes qui s'accumulent en base).
+  # L'IP du conteneur est détectée et publiée via la clé MQTT "ip". Pour un
+  # device de plus, copier un bloc en changeant le nom et SIM_DEVICE_ID.
+  device-sim-jardin: &device-sim
     profiles: ["sim"]
     build:
       context: ./esp32
       dockerfile: Dockerfile.simulator
-    environment:
+    environment: &device-sim-env
+      SIM_DEVICE_ID: sim-jardin
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       MQTT_USERNAME: ${MQTT_USERNAME}
@@ -133,6 +136,12 @@ services:
     depends_on:
       mosquitto:
         condition: service_healthy
+
+  device-sim-serre:
+    <<: *device-sim
+    environment:
+      <<: *device-sim-env
+      SIM_DEVICE_ID: sim-serre
 
 volumes:
   timescaledb_data:

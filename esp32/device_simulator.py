@@ -24,8 +24,7 @@ ce dossier) plutôt que d'en réinventer un :
 Lancement via Docker (recommandé : l'IP du conteneur est joignable par le
 dashboard, sur le port 80 qu'il utilise toujours) :
 
-    docker compose --profile sim up -d --build
-    docker compose --profile sim up -d --scale device-sim=3   # 3 devices
+    docker compose --profile sim up -d --build   # sim-jardin + sim-serre
 
 En local (le dashboard dans Docker ne pourra pas joindre l'OTA) :
 

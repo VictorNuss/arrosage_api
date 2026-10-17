@@ -16,7 +16,7 @@ prévisions Météo-France (modèle AROME) et la pluviométrie passée.
 | `dashboard`   | Application Dash (port 8050) : vue d'ensemble, historique, météo |
 | `weather`     | Récupère prévisions AROME/ARPEGE et pluvio passée (DPClim)       |
 | `scheduler`   | Programmes d'arrosage automatiques (planning + conditions)       |
-| `device-sim`  | *Optionnel* (profil `sim`) : device ESP32 simulé, pour tester sans matériel |
+| `device-sim-*` | *Optionnel* (profil `sim`) : devices ESP32 simulés `sim-jardin`/`sim-serre`, pour tester sans matériel |
 
 ## Démarrage
 
