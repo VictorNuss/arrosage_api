@@ -1,10 +1,9 @@
-from datetime import datetime, time as time_type, timedelta, timezone
+from datetime import time as time_type
 
 import pandas as pd
 import plotly.graph_objects as go
 from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 from dash.exceptions import PreventUpdate
-from plotly.subplots import make_subplots
 import dash_bootstrap_components as dbc
 
 from . import config, mqtt_control, queries, soil_panel, valve_timers
@@ -194,59 +193,6 @@ def _rain_tile(label, mm):
         ),
         md=6,
     )
-
-
-def _build_history_figure(df: pd.DataFrame) -> go.Figure:
-    """Courbes classiques pour les capteurs ; vannes affichées à part, en
-    carrés rouge (fermée) / vert (ouverte), sur une piste dédiée synchronisée
-    sur le même axe temporel."""
-    is_valve = df["metric"].apply(queries.is_valve_metric)
-    sensor_df = df[~is_valve]
-    valve_df = df[is_valve]
-
-    has_sensors = not sensor_df.empty
-    has_valves = not valve_df.empty
-
-    if has_sensors and has_valves:
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.06)
-        sensor_row, valve_row = 1, 2
-    else:
-        fig = make_subplots(rows=1, cols=1)
-        sensor_row = valve_row = 1
-
-    if has_sensors:
-        for (device_id, metric), group in sensor_df.groupby(["device_id", "metric"]):
-            fig.add_trace(
-                go.Scatter(
-                    x=group["time"], y=group["value"], mode="lines", name=f"{device_id} · {metric}"
-                ),
-                row=sensor_row,
-                col=1,
-            )
-
-    if has_valves:
-        for (device_id, metric), group in valve_df.sort_values("time").groupby(["device_id", "metric"]):
-            label = f"{device_id} · {metric}"
-            colors = [_valve_color(_valve_status(v)) for v in group["value"]]
-            fig.add_trace(
-                go.Scatter(
-                    x=group["time"],
-                    y=[label] * len(group),
-                    mode="markers",
-                    marker=dict(symbol="square", size=14, color=colors, line=dict(width=0)),
-                    name=label,
-                    showlegend=False,
-                ),
-                row=valve_row,
-                col=1,
-            )
-        fig.update_yaxes(fixedrange=True, row=valve_row, col=1)
-
-    if not has_sensors and not has_valves:
-        fig.update_layout(title="Aucune donnée sur cette période")
-
-    fig.update_layout(margin=dict(l=40, r=20, t=30, b=40), legend=dict(orientation="h"))
-    return fig
 
 
 def _build_metric_item(reading):
@@ -563,49 +509,6 @@ def register_callbacks(app):
             device_readings = readings[readings["device_id"] == device_row["device_id"]]
             cards.append(_build_device_card(device_row, device_readings))
         return dbc.Row(cards)
-
-    @app.callback(
-        Output("history-devices", "options"),
-        Output("history-metrics", "options"),
-        Output("history-date-range", "start_date"),
-        Output("history-date-range", "end_date"),
-        Input("tabs", "active_tab"),
-    )
-    def populate_history_filters(_active_tab):
-        devices = queries.get_devices()
-        device_options = [
-            {"label": row.get("name") or row["device_id"], "value": row["device_id"]}
-            for _, row in devices.iterrows()
-        ]
-        metric_options = [
-            {"label": m if metric_label(m) == m else f"{metric_label(m)} ({m})", "value": m}
-            for m in queries.get_known_metrics()
-        ]
-        end_date = datetime.now(timezone.utc).date()
-        start_date = end_date - timedelta(days=2)
-        return device_options, metric_options, start_date, end_date
-
-    @app.callback(
-        Output("history-graph", "figure"),
-        Input("history-devices", "value"),
-        Input("history-metrics", "value"),
-        Input("history-date-range", "start_date"),
-        Input("history-date-range", "end_date"),
-    )
-    def update_history_graph(devices, metrics, start_date, end_date):
-        if not devices or not metrics or not start_date or not end_date:
-            fig = go.Figure()
-            fig.update_layout(title="Sélectionnez au moins un appareil et une métrique")
-            return fig
-
-        # DatePickerRange renvoie des chaînes ISO ("2026-07-14"), pas des
-        # datetime : get_history fait de l'arithmétique dessus (end - start).
-        start = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
-        end = datetime.fromisoformat(end_date).replace(
-            hour=23, minute=59, second=59, tzinfo=timezone.utc
-        )
-        df = queries.get_history(devices, metrics, start, end)
-        return _build_history_figure(df)
 
     @app.callback(
         Output("program-modal", "is_open", allow_duplicate=True),

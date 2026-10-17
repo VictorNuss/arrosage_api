@@ -3,6 +3,7 @@ import dash_bootstrap_components as dbc
 
 from . import config
 from .firmware_tab import build_firmware_tab
+from .history_tab import build_history_tab
 from .weather_tab import build_weather_tab
 
 
@@ -52,45 +53,6 @@ def build_overview_tab():
             ),
             html.Div(id="soil-panel"),
             html.Div(id="overview-cards"),
-        ],
-        className="pt-3",
-    )
-
-
-def build_history_tab():
-    return html.Div(
-        [
-            dbc.Row(
-                [
-                    dbc.Col(
-                        [
-                            html.Label("Appareils"),
-                            dcc.Dropdown(id="history-devices", multi=True),
-                        ],
-                        md=4,
-                    ),
-                    dbc.Col(
-                        [
-                            html.Label("Métriques"),
-                            dcc.Dropdown(id="history-metrics", multi=True),
-                        ],
-                        md=4,
-                    ),
-                    dbc.Col(
-                        [
-                            html.Label("Période"),
-                            dcc.DatePickerRange(
-                                id="history-date-range",
-                                display_format="DD/MM/YYYY",
-                                first_day_of_week=1,
-                            ),
-                        ],
-                        md=4,
-                    ),
-                ],
-                className="g-3 pt-3",
-            ),
-            dcc.Loading(dcc.Graph(id="history-graph"), className="pt-3"),
         ],
         className="pt-3",
     )

@@ -260,7 +260,7 @@ def build_weather_tab():
                     options=_RANGE_OPTIONS,
                     value=_DEFAULT_RANGE_HOURS,
                     inline=True,
-                    className="btn-group btn-group-sm weather-range",
+                    className="btn-group btn-group-sm segmented",
                     inputClassName="btn-check",
                     labelClassName="btn btn-outline-primary",
                     labelCheckedClassName="active",

@@ -262,10 +262,13 @@ Puis cinq onglets :
   Zigbee, avec alerte de pile faible et signalement des mesures de plus de
   6 h), et une carte par appareil avec ses dernières valeurs connues.
   Rafraîchi toutes les 15s.
-- **Historique** : sélection d'appareils/métriques + plage de dates
-  (utilise automatiquement l'agrégat horaire au-delà de 2 jours pour rester
-  rapide). Les vannes s'affichent séparément des courbes de capteurs, en
-  carrés rouge (fermée) / vert (ouverte) sur une piste synchronisée.
+- **Historique** : tous les appareils et toutes les mesures d'emblée
+  (filtre d'appareils optionnel), sur 24 h / 7 jours / 30 jours. Les
+  arrosages sont présentés en frise (une ligne par vanne, une barre par
+  ouverture) avec le nombre d'arrosages et la durée totale par vanne ; puis
+  un graphique par mesure (une courbe par appareil, avec son unité et son
+  min/max). Au-delà de 2 jours, les mesures viennent de l'agrégat horaire ;
+  les vannes, elles, toujours des données brutes.
 - **Météo** : prévisions AROME/ARPEGE, cumul de pluie passé, et une carte
   radar interactive (widget [Windy](https://www.windy.com), gratuit, sans
   clé API — centrée sur `WEATHER_LAT`/`WEATHER_LON`).
