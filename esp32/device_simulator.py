@@ -135,14 +135,16 @@ class SimulatedDevice:
     # --- Capteurs ----------------------------------------------------------------
 
     def read_sensors(self):
-        """Une "lecture matérielle" : marche aléatoire, la cuve se vide et le
-        sol s'humidifie tant qu'une vanne est ouverte."""
+        """Une "lecture matérielle" : la cuve se vide (~0,5 cm/min par vanne
+        ouverte avec la période par défaut de 10 s) et le sol s'humidifie
+        tant qu'une vanne est ouverte, puis sèche lentement ; petit bruit de
+        mesure sans dérive."""
         with self._lock:
             open_valves = sum(1 for state in self.valves.values() if state == "open")
             level = self.sensors.get("water_level_cm", self.tank_height_cm * 0.8)
-            level += random.uniform(-0.2, 0.3) - 1.5 * open_valves
+            level += random.uniform(-0.05, 0.05) - 0.08 * open_valves
             humidity = self.sensors.get("humidity_pct", 40.0)
-            humidity += random.uniform(-0.5, 0.3) + 2.0 * open_valves
+            humidity += random.uniform(-0.03, 0.01) + 0.05 * open_valves
             temperature = self.sensors.get("temperature_c", 18.0) + random.uniform(-0.3, 0.3)
             self.sensors = {
                 "water_level_cm": round(min(max(level, 0.0), self.tank_height_cm), 1),

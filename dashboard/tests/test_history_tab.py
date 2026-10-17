@@ -39,6 +39,25 @@ def test_period_bounds(key, hours):
     assert end == NOW and end - start == timedelta(hours=hours)
 
 
+# --- displayed_start ------------------------------------------------------------------------
+
+def _times(*minutes):
+    return pd.DataFrame({"time": [START + timedelta(minutes=m) for m in minutes]})
+
+
+def test_displayed_start_follows_the_first_data_when_more_recent():
+    assert history_tab.displayed_start(START, _times(600, 700), _times(650)) == START + timedelta(minutes=600)
+
+
+def test_displayed_start_keeps_the_period_start_when_data_is_older():
+    # ex. dernier état d'une vanne antérieur à la période (get_valve_history)
+    assert history_tab.displayed_start(START, _times(-30, 10), _times(5)) == START
+
+
+def test_displayed_start_without_data():
+    assert history_tab.displayed_start(START, pd.DataFrame(), pd.DataFrame(columns=["time"])) == START
+
+
 # --- watering_intervals ---------------------------------------------------------------------
 
 def test_open_then_closed_gives_one_interval_ignoring_transitions():

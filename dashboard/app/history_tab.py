@@ -44,6 +44,17 @@ def period_bounds(period_key, now=None):
     return now - duration, now
 
 
+def displayed_start(start, *frames):
+    """Début de l'axe du temps : `start`, sauf si les premières données sont
+    plus récentes (installation neuve, base de test) - sinon tout tiendrait
+    dans un coin du graphique. Les frames ont une colonne `time`."""
+    firsts = [pd.to_datetime(f["time"], utc=True).min() for f in frames if not f.empty]
+    firsts = [t for t in firsts if not pd.isna(t)]
+    if not firsts:
+        return start
+    return max(pd.Timestamp(start), min(firsts)).to_pydatetime()
+
+
 def watering_intervals(valve_df: pd.DataFrame, start, end) -> pd.DataFrame:
     """Périodes d'ouverture de chaque vanne, rognées à [start, end].
 
@@ -108,8 +119,14 @@ def _x_range(start, end):
     return [pd.Timestamp(start).tz_convert(config.LOCAL_TZ), pd.Timestamp(end).tz_convert(config.LOCAL_TZ)]
 
 
-def _time_axis_format(start, end):
-    return "%Hh" if (end - start) <= timedelta(days=1) else "%d/%m"
+# Format des graduations selon l'écart entre deux graduations (ms) : la
+# fenêtre affichée peut aller de quelques minutes (installation neuve) à 30
+# jours, un format fixe ("%Hh") répéterait la même heure sur toute la largeur.
+_TIME_TICK_FORMATS = [
+    dict(dtickrange=[None, 3_600_000], value="%Hh%M"),
+    dict(dtickrange=[3_600_000, 86_400_000], value="%Hh"),
+    dict(dtickrange=[86_400_000, None], value="%d/%m"),
+]
 
 
 def _valve_name(device_id, metric, device_names, several_devices):
@@ -143,7 +160,7 @@ def build_watering_figure(intervals: pd.DataFrame, valve_keys, device_names, sta
         range=[-0.5, len(valve_keys) - 0.5],
         fixedrange=True,
     )
-    fig.update_xaxes(type="date", range=_x_range(start, end), tickformat=_time_axis_format(start, end))
+    fig.update_xaxes(type="date", range=_x_range(start, end), tickformatstops=_TIME_TICK_FORMATS)
     fig.update_layout(
         height=50 + 36 * max(1, len(valve_keys)),
         showlegend=False,
@@ -200,7 +217,7 @@ def build_metric_figure(metric_df: pd.DataFrame, unit, device_names, start, end)
             )
         )
     several = len(device_ids) > 1
-    fig.update_xaxes(range=_x_range(start, end), tickformat=_time_axis_format(start, end))
+    fig.update_xaxes(range=_x_range(start, end), tickformatstops=_TIME_TICK_FORMATS)
     fig.update_yaxes(title_text=unit or "")
     fig.update_layout(
         height=230 if several else 200,
@@ -322,6 +339,10 @@ def register_callbacks(app):
         sensor_metrics = [m for m in known_metrics if m not in valve_metrics]
 
         valve_df = queries.get_valve_history(device_ids, start, end)
+        history = queries.get_history(device_ids, sensor_metrics, start, end)
+        # Même axe du temps pour la frise et toutes les mesures.
+        start = displayed_start(start, valve_df, history)
+
         latest = queries.get_latest_readings()
         valve_keys = sorted(
             {(row.device_id, row.metric) for row in latest.itertuples()
@@ -330,7 +351,6 @@ def register_callbacks(app):
         intervals = watering_intervals(valve_df, start, end)
         watering = build_watering_section(intervals, valve_keys, device_names, start, end)
 
-        history = queries.get_history(device_ids, sensor_metrics, start, end)
         if history.empty:
             return watering, dbc.Alert("Aucune mesure sur cette période.", color="secondary")
         units = latest.dropna(subset=["unit"]).groupby("metric")["unit"].first().to_dict() if not latest.empty else {}
