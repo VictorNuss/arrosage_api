@@ -88,6 +88,10 @@ Voir [`esp32/README.md`](esp32/README.md) pour le contrat complet et à jour
   chaque connexion MQTT du device et en réponse à un `get_status`. Sert à
   cibler automatiquement le bon device pour l'OTA (voir plus bas), sans
   mapping à tenir à la main.
+- Version firmware (device → serveur) : clé spéciale
+  `arrosage/<device_id>/etat/fw_version`, `{"value": "v1.2.0"}` (chaîne
+  libre — alimente `devices.fw_version`), même cycle de publication que
+  `ip`. Affichée dans l'onglet Firmware, avant et après une mise à jour.
 - OTA (serveur → device, HTTP local, pas MQTT) : `POST http://<ip>/api/ota`
   avec le `.bin` brut — voir onglet **Firmware** du dashboard plus bas.
 
@@ -109,7 +113,9 @@ psql -U arrosage -d arrosage -f - < db/init/00N_fichier.sql`). Il crée :
 - `devices` : appareils connus (auto-alimentée par `ingest`), avec
   `ip_address` (IP locale fixe, découverte automatiquement via la clé MQTT
   `ip` — voir plus haut — et modifiable manuellement en repli depuis
-  l'onglet Firmware du dashboard, utilisée pour l'OTA),
+  l'onglet Firmware du dashboard, utilisée pour l'OTA) et `fw_version`
+  (version du firmware en cours, clé MQTT `fw_version`, migration
+  `004_add_device_fw_version.sql`),
 - `sensor_readings` : hypertable des mesures (une ligne par métrique),
   compressée au-delà de 7 jours, avec un agrégat continu horaire
   (`sensor_readings_hourly`) utilisé par le dashboard pour les longues
@@ -201,17 +207,19 @@ Puis cinq onglets :
 - **Météo** : prévisions AROME/ARPEGE, cumul de pluie passé, et une carte
   radar interactive (widget [Windy](https://www.windy.com), gratuit, sans
   clé API — centrée sur `WEATHER_LAT`/`WEATHER_LON`).
-- **Firmware** : mise à jour OTA par device. L'IP locale fixe de chaque
-  device est découverte automatiquement (clé MQTT `ip`, republiée à chaque
-  connexion et via `get_status`) et pré-remplie ; le bouton "Enregistrer"
-  reste disponible en repli pour la saisir/corriger manuellement. Tant
-  qu'elle est inconnue, le bouton "Envoyer" reste grisé — un bouton 🔄 permet
-  de forcer un `get_status` pour redemander sa republication. Choisir
-  ensuite un fichier `.bin` et cliquer "Envoyer" — une confirmation
-  s'affiche avant l'envoi effectif (le device va redémarrer). Le dashboard
-  relaie le fichier en `POST` vers `http://<ip>/api/ota` (voir
+- **Firmware** : mise à jour OTA. Choisir l'appareil dans la liste
+  déroulante (nom, IP et version firmware, découvertes automatiquement via
+  les clés MQTT `ip`/`fw_version`), déposer un fichier `.bin`, puis
+  "Envoyer la mise à jour" — une confirmation (avec la version actuelle)
+  s'affiche avant l'envoi effectif (le device va redémarrer). Le bouton
+  reste grisé tant que l'IP du device ou le fichier manque. "Actualiser"
+  force un `get_status` pour redemander IP et version ; "Saisir l'IP
+  manuellement" reste disponible en repli (firmware qui ne publie pas encore
+  son IP). Après un envoi réussi, la liste se recharge ~30s plus tard pour
+  afficher la nouvelle version republiée par le device. Le dashboard relaie
+  le fichier en `POST` vers `http://<ip>/api/ota` (voir
   [`esp32/README.md`](esp32/README.md) > "Mise à jour firmware"). Un seul
-  envoi à la fois par device (bouton désactivé pendant l'upload).
+  envoi à la fois par device. Un tableau récapitule les appareils connus.
 - **Programmes** : création/édition de programmes d'arrosage automatiques
   (jours, heure de déclenchement, durée, vannes, conditions), et historique
   des exécutions récentes (exécuté/ignoré + raison). Le dashboard n'écrit que

@@ -101,6 +101,19 @@ Règles :
   dashboard grise le bouton de mise à jour OTA tant qu'elle est absente,
   et permet de forcer un `get_status` pour redemander sa republication.
 
+### Clé spéciale `fw_version`
+
+Topic `arrosage/<device_id>/etat/fw_version`, payload `{"value": "v1.2.0"}`.
+Comme `ip` : une **chaîne** (version du firmware en cours d'exécution,
+`esp_app_get_description()->version` côté ESP-IDF — tag/`git describe` au
+moment du build), publiée aux mêmes moments (chaque connexion MQTT +
+`get_status`, retain=true). Elle alimente `devices.fw_version`, pas
+`sensor_readings`. Le dashboard l'affiche dans l'onglet Firmware et dans la
+confirmation d'envoi ; après un OTA réussi, le device redémarre et republie
+sa nouvelle version, ce qui permet de vérifier que la mise à jour a bien été
+appliquée (et pas annulée par le rollback). Chaîne non vide, 64 caractères
+imprimables au plus — sinon le message est ignoré par `ingest`.
+
 ## Commande des vannes (serveur → device)
 
 Topic : `arrosage/<device_id>/commande`, QoS 1, **jamais retain**.
@@ -143,8 +156,9 @@ Règles :
 
 ## Mise à jour firmware (OTA), en HTTP local — pas de MQTT
 
-Chaque device a une IP locale fixe (configurée au flashage, saisie une fois
-dans le dashboard, onglet "Firmware"). Il héberge un serveur HTTP local :
+Chaque device a une IP locale fixe (configurée au flashage, publiée par le
+device lui-même via la clé MQTT `ip`, voir README principal). Il héberge un
+serveur HTTP local :
 
 ```
 POST http://<ip_fixe_du_device>/api/ota
@@ -169,7 +183,7 @@ curl -X POST --data-binary @arrosage_fw.bin http://192.168.1.50/api/ota
 ### Tester l'OTA sans matériel
 
 [`mock_ota_server.py`](mock_ota_server.py) simule cet endpoint (bibliothèque
-standard uniquement, tourne directement sur l'hôte, pas besoin de Docker) :
+standard uniquement) :
 
 ```bash
 python esp32/mock_ota_server.py 8090
@@ -178,8 +192,19 @@ python esp32/mock_ota_server.py 8090
 Il accepte n'importe quel corps non vide (`200 OK, redemarrage en
 cours...`), sauf s'il commence par `FAIL` (`400`, pratique pour tester le
 chemin d'erreur du dashboard). Un délai de 2s est simulé avant la réponse.
-Dans le dashboard, renseigner `<IP de cette machine>:8090` comme IP du
-device dans l'onglet Firmware pour tester le relais de bout en bout.
+
+Le dashboard n'accepte qu'une IPv4 nue (pas de `:port`) et envoie toujours
+sur le port 80 : pour tester le relais de bout en bout, le plus simple est
+de lancer le mock sur le port 80 dans un conteneur à IP fixe sur le réseau
+de la stack, puis de publier cette IP comme le ferait le device :
+
+```bash
+docker network inspect <projet>_default --format '{{(index .IPAM.Config 0).Subnet}}'  # ex 172.18.0.0/16
+docker run -d --rm --name mock-ota --network <projet>_default --ip 172.18.0.50 \
+  -v "$PWD/esp32:/srv:ro" python:3.12-slim python -u /srv/mock_ota_server.py 80
+mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/ip -m '{"value":"172.18.0.50"}'
+mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/fw_version -m '{"value":"v1.0.0"}'
+```
 
 ## Tester le contrat MQTT sans matériel
 
