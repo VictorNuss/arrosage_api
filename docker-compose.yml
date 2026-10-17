@@ -115,6 +115,25 @@ services:
       mosquitto:
         condition: service_healthy
 
+  # Device ESP32 simulé (esp32/device_simulator.py), pour tester sans
+  # matériel. Désactivé par défaut : docker compose --profile sim up -d
+  # (ajouter --scale device-sim=3 pour plusieurs devices). device_id dérivé
+  # du nom d'hôte du conteneur, IP détectée et publiée via la clé MQTT "ip".
+  device-sim:
+    profiles: ["sim"]
+    build:
+      context: ./esp32
+      dockerfile: Dockerfile.simulator
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      MQTT_USERNAME: ${MQTT_USERNAME}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+      SIM_TANK_HEIGHT_CM: ${TANK_HEIGHT_FULL_CM}
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+
 volumes:
   timescaledb_data:
   mosquitto_data:

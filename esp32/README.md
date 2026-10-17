@@ -180,30 +180,42 @@ Test manuel :
 curl -X POST --data-binary @arrosage_fw.bin http://192.168.1.50/api/ota
 ```
 
-### Tester l'OTA sans matériel
+### Tester sans matériel : device simulé
 
-[`mock_ota_server.py`](mock_ota_server.py) simule cet endpoint (bibliothèque
-standard uniquement) :
+[`device_simulator.py`](device_simulator.py) simule un device complet en
+respectant ce contrat : publication de `ip`/`fw_version` à la connexion,
+capteurs à chaque "lecture" (la cuve baisse et le sol s'humidifie quand une
+vanne est ouverte), vannes à 3 états avec fermeture automatique (mêmes
+durées max que `valve_config.cpp`), commandes `open`/`close`/`stop_all`/
+`get_status`, et endpoint `POST /api/ota`.
+
+Comme le vrai device, l'OTA n'accepte qu'une **vraie image ESP-IDF** : la
+version est lue dans le descripteur d'application du `.bin`, puis le device
+"redémarre" (déconnexion MQTT, vannes fermées) et republie cette nouvelle
+version. Pour tester, envoyer le `build/arrosage_fw.bin` du repo firmware
+(`idf.py build`) ; tout autre fichier est refusé (`400`), ce qui teste le
+chemin d'erreur du dashboard. `GET /api/state` renvoie un instantané JSON.
+
+Il tourne dans la stack Docker (profil `sim`, désactivé par défaut) : son
+IP de conteneur est joignable par le dashboard, sur le port 80 qu'il
+utilise toujours (il n'accepte qu'une IPv4 nue, sans `:port`).
 
 ```bash
-python esp32/mock_ota_server.py 8090
+docker compose --profile sim up -d --build                         # 1 device
+docker compose --profile sim up -d --build --scale device-sim=3    # 3 devices
+docker compose --profile sim logs -f device-sim
 ```
 
-Il accepte n'importe quel corps non vide (`200 OK, redemarrage en
-cours...`), sauf s'il commence par `FAIL` (`400`, pratique pour tester le
-chemin d'erreur du dashboard). Un délai de 2s est simulé avant la réponse.
+Le `device_id` vaut `sim-<nom d'hôte du conteneur>` (fixable avec
+`SIM_DEVICE_ID` pour un device unique). Autres réglages par variable
+d'environnement ou option : `SIM_FW_VERSION` (`v0.0.0-sim`),
+`SIM_TRANSITION_DELAY_S` (15), `SIM_SENSOR_PERIOD_S` (10),
+`SIM_REBOOT_DELAY_S` (3) — voir `python esp32/device_simulator.py --help`.
 
-Le dashboard n'accepte qu'une IPv4 nue (pas de `:port`) et envoie toujours
-sur le port 80 : pour tester le relais de bout en bout, le plus simple est
-de lancer le mock sur le port 80 dans un conteneur à IP fixe sur le réseau
-de la stack, puis de publier cette IP comme le ferait le device :
+Tests du simulateur :
 
 ```bash
-docker network inspect <projet>_default --format '{{(index .IPAM.Config 0).Subnet}}'  # ex 172.18.0.0/16
-docker run -d --rm --name mock-ota --network <projet>_default --ip 172.18.0.50 \
-  -v "$PWD/esp32:/srv:ro" python:3.12-slim python -u /srv/mock_ota_server.py 80
-mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/ip -m '{"value":"172.18.0.50"}'
-mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/fw_version -m '{"value":"v1.0.0"}'
+uv run --no-project --python 3.12 --with paho-mqtt==2.1.0 --with pytest pytest esp32 -q
 ```
 
 ## Tester le contrat MQTT sans matériel

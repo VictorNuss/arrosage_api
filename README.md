@@ -16,6 +16,7 @@ prévisions Météo-France (modèle AROME) et la pluviométrie passée.
 | `dashboard`   | Application Dash (port 8050) : vue d'ensemble, historique, météo |
 | `weather`     | Récupère prévisions AROME/ARPEGE et pluvio passée (DPClim)       |
 | `scheduler`   | Programmes d'arrosage automatiques (planning + conditions)       |
+| `device-sim`  | *Optionnel* (profil `sim`) : device ESP32 simulé, pour tester sans matériel |
 
 ## Démarrage
 
@@ -53,6 +54,7 @@ cd ingest && uv run pytest -q     # parsing/coercion du contrat MQTT état
 cd dashboard && uv run pytest -q  # commandes vannes, cache live, OTA, météo, programmes
 cd weather && uv run pytest -q    # extraction des séries Open-Meteo
 cd scheduler && uv run pytest -q  # évaluation des conditions, déclenchement des programmes
+uv run --no-project --python 3.12 --with paho-mqtt==2.1.0 --with pytest pytest esp32 -q  # device simulé
 ```
 
 Ce sont des tests unitaires (pas besoin de Docker/base/broker) : les accès
@@ -95,7 +97,10 @@ Voir [`esp32/README.md`](esp32/README.md) pour le contrat complet et à jour
 - OTA (serveur → device, HTTP local, pas MQTT) : `POST http://<ip>/api/ota`
   avec le `.bin` brut — voir onglet **Firmware** du dashboard plus bas.
 
-Test rapide sans matériel :
+Test sans matériel : un device simulé complet (capteurs, vannes, OTA) se
+lance avec `docker compose --profile sim up -d --build` — voir
+[`esp32/README.md`](esp32/README.md) > "Tester sans matériel". Ou, au plus
+simple, publier des messages à la main :
 
 ```bash
 mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/water_level_cm -m '{"value":34.5}'
