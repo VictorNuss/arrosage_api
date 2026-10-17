@@ -21,6 +21,17 @@ def mark_opened(device_id: str, metric: str, duration_s: int) -> None:
         _close_at[(device_id, metric)] = datetime.now(timezone.utc) + timedelta(seconds=duration_s)
 
 
+def mark_extended(device_id: str, metric: str, duration_s: int) -> None:
+    """Vanne déjà ouverte : le firmware ajoute duration_s au temps restant
+    ("extra-time", borné côté device par la durée max de la vanne, que le
+    dashboard ne connaît pas - l'estimation peut donc dépasser la réalité)."""
+    with _lock:
+        now = datetime.now(timezone.utc)
+        current = _close_at.get((device_id, metric))
+        base = current if current is not None and current > now else now
+        _close_at[(device_id, metric)] = base + timedelta(seconds=duration_s)
+
+
 def mark_closed(device_id: str, metric: str) -> None:
     with _lock:
         _close_at.pop((device_id, metric), None)

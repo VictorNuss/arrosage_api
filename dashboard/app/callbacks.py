@@ -53,6 +53,23 @@ def _build_valve_badge(status, direction=None):
     )
 
 
+def _is_opening(status, direction=None) -> bool:
+    """Ouverte, ou en cours d'ouverture : une nouvelle commande "open" la
+    prolonge ("extra-time") au lieu de la rouvrir (voir esp32/README.md)."""
+    return status == "open" or (status == "transition" and direction == "opening")
+
+
+def _open_button_label(status, direction=None) -> str:
+    return "Prolonger" if _is_opening(status, direction) else "Ouvrir"
+
+
+def _valve_buttons_disabled(status, direction=None) -> bool:
+    """Boutons grisés pendant une fermeture en cours (ou une transition de
+    sens inconnu) ; pendant une ouverture, "Prolonger" et "Fermer" (annuler)
+    restent possibles."""
+    return status == "transition" and direction != "opening"
+
+
 def _build_valve_countdown(device_id, metric, status):
     remaining = valve_timers.get_remaining_seconds(device_id, metric) if status == "open" else None
     return f"Ferme dans {valve_timers.format_remaining(remaining)}" if remaining is not None else ""
@@ -63,7 +80,7 @@ def _build_valve_chip(row):
     direction = row.get("direction")
     device_id = row["device_id"]
     metric = row["metric"]
-    is_transitioning = status == "transition"
+    buttons_disabled = _valve_buttons_disabled(status, direction)
 
     return dbc.Col(
         dbc.Card(
@@ -102,12 +119,12 @@ def _build_valve_chip(row):
                     dbc.ButtonGroup(
                         [
                             dbc.Button(
-                                "Ouvrir",
+                                _open_button_label(status, direction),
                                 id={"type": "valve-open-btn", "device": device_id, "metric": metric},
                                 color="success",
                                 size="sm",
                                 n_clicks=0,
-                                disabled=is_transitioning,
+                                disabled=buttons_disabled,
                             ),
                             dbc.Button(
                                 "Fermer",
@@ -115,7 +132,7 @@ def _build_valve_chip(row):
                                 color="secondary",
                                 size="sm",
                                 n_clicks=0,
-                                disabled=is_transitioning,
+                                disabled=buttons_disabled,
                             ),
                         ],
                         size="sm",
@@ -372,6 +389,16 @@ def _format_valves_triggered(valves_triggered):
     return ", ".join(f"{v['metric']} ({v['duration_s'] // 60}min)" for v in valves_triggered)
 
 
+def _current_valve_status(device_id, metric):
+    """(statut, direction) actuel d'une vanne, ("closed", None) si inconnue."""
+    valves = queries.get_valve_states()
+    match = valves[(valves["device_id"] == device_id) & (valves["metric"] == metric)] if not valves.empty else valves
+    if match.empty:
+        return "closed", None
+    row = match.iloc[-1]
+    return _valve_status(row["value"]), row.get("direction")
+
+
 def register_callbacks(app):
     @app.callback(
         Output("valve-command-feedback", "children"),
@@ -397,14 +424,19 @@ def register_callbacks(app):
                     duration_min = state["value"]
                     break
             duration_s = int(duration_min) * 60 if duration_min else None
+            extending = _is_opening(*_current_valve_status(device_id, metric))
             ok = mqtt_control.send_valve_command(device_id, metric, "open", duration_s)
             if ok and duration_s:
-                valve_timers.mark_opened(device_id, metric, duration_s)
-            message = (
-                f"Ouverture de {metric} ({device_id}) pour {duration_min} min envoyée."
-                if ok
-                else f"Échec de l'envoi de la commande d'ouverture pour {metric} ({device_id})."
-            )
+                if extending:
+                    valve_timers.mark_extended(device_id, metric, duration_s)
+                else:
+                    valve_timers.mark_opened(device_id, metric, duration_s)
+            if not ok:
+                message = f"Échec de l'envoi de la commande d'ouverture pour {metric} ({device_id})."
+            elif extending:
+                message = f"Prolongation de {metric} ({device_id}) de {duration_min} min envoyée."
+            else:
+                message = f"Ouverture de {metric} ({device_id}) pour {duration_min} min envoyée."
         else:
             ok = mqtt_control.send_valve_command(device_id, metric, "close")
             if ok:
@@ -437,6 +469,7 @@ def register_callbacks(app):
         Output({"type": "valve-countdown-wrap", "device": ALL, "metric": ALL}, "children"),
         Output({"type": "valve-open-btn", "device": ALL, "metric": ALL}, "disabled"),
         Output({"type": "valve-close-btn", "device": ALL, "metric": ALL}, "disabled"),
+        Output({"type": "valve-open-btn", "device": ALL, "metric": ALL}, "children"),
         Input("global-interval", "n_intervals"),
     )
     def update_valve_badges(_n):
@@ -469,14 +502,15 @@ def register_callbacks(app):
             status, _direction = status_of(oid)
             countdowns.append(_build_valve_countdown(oid["device"], oid["metric"], status))
 
-        # Boutons désactivés tant que la vanne est en transition (~15s) :
-        # évite d'envoyer une commande contradictoire pendant qu'elle bouge
-        # déjà. Ces props sont mises à jour en place (pas de reconstruction
-        # des boutons), donc pas de risque de perdre un clic.
-        open_disabled = [status_of(oid)[0] == "transition" for oid in open_btn_ids]
-        close_disabled = [status_of(oid)[0] == "transition" for oid in close_btn_ids]
+        # Boutons désactivés pendant une fermeture en cours (~15s) : évite
+        # d'envoyer une commande contradictoire pendant qu'elle bouge déjà.
+        # Ces props sont mises à jour en place (pas de reconstruction des
+        # boutons), donc pas de risque de perdre un clic.
+        open_disabled = [_valve_buttons_disabled(*status_of(oid)) for oid in open_btn_ids]
+        close_disabled = [_valve_buttons_disabled(*status_of(oid)) for oid in close_btn_ids]
+        open_labels = [_open_button_label(*status_of(oid)) for oid in open_btn_ids]
 
-        return badges, countdowns, open_disabled, close_disabled
+        return badges, countdowns, open_disabled, close_disabled, open_labels
 
     @app.callback(Output("tank-gauge", "children"), Input("global-interval", "n_intervals"))
     def update_tank_gauge(_n):

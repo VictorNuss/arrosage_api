@@ -134,7 +134,12 @@ Topic : `arrosage/<device_id>/commande`, QoS 1, **jamais retain**.
 Règles :
 - `action: "open"` + `duration_s` → le **firmware** gère localement le
   minuteur d'auto-fermeture (robuste à une coupure réseau/dashboard après
-  l'envoi de la commande).
+  l'envoi de la commande). Sur une vanne **déjà ouverte ou en cours
+  d'ouverture**, `open` ne rejoue pas la transition (rien ne bouge, aucun
+  état republié) : `duration_s` s'**ajoute** au temps restant
+  ("extra-time"), le total restant borné par la durée max de la vanne.
+  C'est le bouton "Prolonger" du dashboard ; un programme qui se déclenche
+  sur une vanne déjà ouverte la prolonge de la même façon.
 - `action: "close"` → ferme immédiatement, annule le minuteur en cours pour
   cette vanne.
 - `action: "stop_all"` → ferme toutes les vannes immédiatement (pas de champ

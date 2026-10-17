@@ -84,6 +84,52 @@ def test_open_goes_through_transitioning_then_auto_closes(device, published):
     assert published.states_of("vanne_2") == ["transitioning", "open", "transitioning", "closed"]
 
 
+@pytest.mark.parametrize(
+    "remaining,requested,expected", [(300, 600, 900), (0, 600, 600), (800, 600, 900), (100, 0, 900)]
+)
+def test_extend_duration(remaining, requested, expected):
+    assert sim.extend_duration(remaining, requested, 900) == expected
+
+
+def _open(device, valve, duration_s):
+    device.handle_command(json.dumps({"vanne": valve, "action": "open", "duration_s": duration_s}))
+
+
+def test_reopening_an_open_valve_adds_extra_time_without_moving(device, published):
+    _open(device, "vanne_2", 300)
+    assert _wait_for(lambda: device.valves["vanne_2"] == "open")
+    published.messages.clear()
+
+    _open(device, "vanne_2", 120)
+
+    assert published.messages == []  # aucune transition rejouée, rien de republié
+    assert device.valves["vanne_2"] == "open"
+    assert 419 <= device.remaining_seconds("vanne_2") <= 420
+
+
+def test_extra_time_is_capped_at_the_valve_max_duration(device):
+    _open(device, "vanne_3", 500)  # max 600 s
+    _open(device, "vanne_3", 500)
+    assert device.remaining_seconds("vanne_3") == 600
+
+
+def test_reopening_during_opening_transition_extends_instead_of_restarting(device, published):
+    _open(device, "vanne_1", 300)
+    _open(device, "vanne_1", 300)  # encore "transitioning" vers l'ouverture
+    assert published.states_of("vanne_1") == ["transitioning"]
+    assert 599 <= device.remaining_seconds("vanne_1") <= 600
+
+
+def test_opening_during_closing_transition_reopens(device, published):
+    _open(device, "vanne_1", 300)
+    assert _wait_for(lambda: device.valves["vanne_1"] == "open")
+    device.handle_command(json.dumps({"vanne": "vanne_1", "action": "close"}))
+    _open(device, "vanne_1", 60)  # fermeture en cours : nouvelle ouverture normale
+    assert _wait_for(lambda: device.valves["vanne_1"] == "open")
+    assert published.states_of("vanne_1")[-3:] == ["transitioning", "transitioning", "open"]
+    assert 59 <= device.remaining_seconds("vanne_1") <= 60
+
+
 def test_close_cancels_auto_close(device, published):
     device.handle_command(json.dumps({"vanne": "vanne_1", "action": "open", "duration_s": 600}))
     device.handle_command(json.dumps({"vanne": "vanne_1", "action": "close"}))

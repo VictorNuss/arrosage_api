@@ -11,7 +11,9 @@ ce dossier) plutôt que d'en réinventer un :
     get_status. Vannes à 3 états : "transitioning" pendant
     --transition-delay secondes avant "open"/"closed", fermeture
     automatique au bout de duration_s (bornée par la durée max de la vanne,
-    comme valve_logic_clamp_duration).
+    comme valve_logic_clamp_duration). Sur une vanne déjà ouverte (ou en
+    cours d'ouverture), "open" ajoute duration_s au temps restant
+    ("extra-time", total borné) sans nouvelle transition.
   - OTA : POST http://<ip>/api/ota avec le .bin brut. Seule une vraie image
     ESP-IDF est acceptée (octet magique 0xE9 + descripteur d'application) :
     sa version est lue dans le binaire, puis le device "redémarre"
@@ -34,6 +36,7 @@ En local (le dashboard dans Docker ne pourra pas joindre l'OTA) :
 import argparse
 import json
 import logging
+import math
 import os
 import random
 import socket
@@ -81,6 +84,12 @@ def clamp_duration(requested_s: int, max_duration_s: int) -> int:
     return requested_s
 
 
+def extend_duration(remaining_s: int, requested_s: int, max_duration_s: int) -> int:
+    """Comme valve_logic_extend_duration ("extra-time" sur une vanne déjà
+    ouverte) : la durée demandée s'ajoute au temps restant, total borné."""
+    return min(remaining_s + clamp_duration(requested_s, max_duration_s), max_duration_s)
+
+
 def detect_local_ip(target_host: str, target_port: int) -> str:
     """IP de l'interface utilisée pour joindre le broker (aucun paquet n'est
     envoyé : connect() sur un socket UDP ne fait que choisir la route)."""
@@ -103,6 +112,8 @@ class SimulatedDevice:
         self.valves = {key: "closed" for key in VALVE_MAX_DURATION_S}
         self._transition_timers = {}
         self._auto_close_timers = {}
+        self._close_deadlines = {}  # clé -> time.monotonic() de la fermeture automatique
+        self._transition_targets = {}  # clé -> True (ouverture) / False (fermeture) en cours
         # Comme le firmware : un capteur jamais lu depuis le boot n'est pas publié.
         self.sensors = {}
 
@@ -154,6 +165,7 @@ class SimulatedDevice:
             previous = self._transition_timers.pop(key, None)
             if previous:
                 previous.cancel()  # annule une transition en cours, comme le firmware
+            self._transition_targets[key] = to_open
             self._set_valve_state(key, "transitioning")
             timer = threading.Timer(self.transition_delay_s, self._end_transition, args=(key, to_open))
             timer.daemon = True
@@ -163,23 +175,48 @@ class SimulatedDevice:
     def _end_transition(self, key, to_open):
         with self._lock:
             self._transition_timers.pop(key, None)
+            self._transition_targets.pop(key, None)
             self._set_valve_state(key, "open" if to_open else "closed")
 
     def _cancel_auto_close(self, key):
+        self._close_deadlines.pop(key, None)
         timer = self._auto_close_timers.pop(key, None)
         if timer:
             timer.cancel()
 
+    def _is_opening(self, key):
+        """Ouverte, ou en cours d'ouverture (GPIO déjà à 1 sur le vrai device)."""
+        return self.valves[key] == "open" or (
+            self.valves[key] == "transitioning" and self._transition_targets.get(key) is True
+        )
+
+    def remaining_seconds(self, key):
+        """Temps restant avant la fermeture automatique (0 si aucune)."""
+        with self._lock:
+            deadline = self._close_deadlines.get(key)
+        return max(0, math.ceil(deadline - time.monotonic())) if deadline else 0
+
     def open_valve(self, key, duration_s):
         with self._lock:
-            duration_s = clamp_duration(duration_s, VALVE_MAX_DURATION_S[key])
+            max_s = VALVE_MAX_DURATION_S[key]
+            already_opening = self._is_opening(key)
+            if already_opening:
+                # Comme le firmware : rien ne bouge, aucun état republié, seule
+                # la durée restante est prolongée ("extra-time").
+                effective_s = extend_duration(self.remaining_seconds(key), duration_s, max_s)
+            else:
+                effective_s = clamp_duration(duration_s, max_s)
             self._cancel_auto_close(key)
-            self._begin_transition(key, to_open=True)
-            timer = threading.Timer(duration_s, self.close_valve, args=(key,))
+            timer = threading.Timer(effective_s, self.close_valve, args=(key,))
             timer.daemon = True
             self._auto_close_timers[key] = timer
+            self._close_deadlines[key] = time.monotonic() + effective_s
             timer.start()
-            log.info("%s : ouverture pour %ss", key, duration_s)
+            if already_opening:
+                log.info("%s : déjà ouverte, prolongée - fermeture dans %ss", key, effective_s)
+            else:
+                self._begin_transition(key, to_open=True)
+                log.info("%s : ouverture pour %ss", key, effective_s)
 
     def close_valve(self, key):
         with self._lock:
@@ -201,6 +238,8 @@ class SimulatedDevice:
                 timer.cancel()
             self._transition_timers.clear()
             self._auto_close_timers.clear()
+            self._close_deadlines.clear()
+            self._transition_targets.clear()
             self.valves = {key: "closed" for key in VALVE_MAX_DURATION_S}
             self.sensors = {}
             self.fw_version = fw_version
