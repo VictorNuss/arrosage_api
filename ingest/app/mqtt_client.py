@@ -66,6 +66,40 @@ def parse_ip_payload(payload_bytes) -> str:
     return raw_value
 
 
+def parse_fw_version_payload(payload_bytes) -> str:
+    """Clé 'fw_version' : {"value": "v1.2.0"}. Chaîne libre non vide (tag git,
+    `git describe`, hash...), bornée pour ne pas stocker n'importe quoi."""
+    data = json.loads(payload_bytes.decode("utf-8"))
+    if not isinstance(data, dict) or "value" not in data:
+        raise ValueError("champ 'value' manquant pour la clé 'fw_version'")
+    raw_value = data["value"]
+    if not isinstance(raw_value, str):
+        raise ValueError(f"version de firmware non textuelle: {raw_value!r}")
+    version = raw_value.strip()
+    if not version or len(version) > config.FW_VERSION_MAX_LENGTH or not version.isprintable():
+        raise ValueError(f"version de firmware invalide: {raw_value!r}")
+    return version
+
+
+# Clés qui décrivent le device lui-même (pas une mesure) : elles alimentent
+# une colonne de la table devices plutôt que sensor_readings.
+_DEVICE_INFO_PARSERS = {
+    config.IP_METRIC_KEY: ("ip_address", parse_ip_payload),
+    config.FW_VERSION_METRIC_KEY: ("fw_version", parse_fw_version_payload),
+}
+
+
+def is_device_info_key(key) -> bool:
+    return key in _DEVICE_INFO_PARSERS
+
+
+def parse_device_info(key, payload_bytes):
+    """Clé d'info device -> (colonne de devices, valeur). ValueError si le
+    payload est invalide, KeyError si la clé n'est pas une info device."""
+    column, parser = _DEVICE_INFO_PARSERS[key]
+    return column, parser(payload_bytes)
+
+
 def parse_topic(topic):
     """arrosage/<device_id>/etat/<key> -> (device_id, key), ou None si le
     topic ne correspond pas (un seul niveau après "etat" est attendu)."""

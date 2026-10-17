@@ -15,6 +15,12 @@ VALVE_METRIC_HINT = "vanne"
 # float).
 IP_METRIC_KEY = "ip"
 
+# Même cycle de publication que "ip" (connexion MQTT + get_status) : version
+# du firmware en cours d'exécution, {"value": "v1.2.0"}. Chaîne libre (tag
+# git, hash...), alimente devices.fw_version.
+FW_VERSION_METRIC_KEY = "fw_version"
+FW_VERSION_MAX_LENGTH = 64
+
 POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "timescaledb")
 POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", "5432"))
 POSTGRES_USER = os.environ.get("POSTGRES_USER", "arrosage")

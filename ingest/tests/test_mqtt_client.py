@@ -152,6 +152,50 @@ def test_parse_ip_payload_missing_value_field_raises():
         mqtt_client.parse_ip_payload(b'{"unexpected": 1}')
 
 
+# --- parse_fw_version_payload / parse_device_info ("fw_version", comme "ip") ---
+
+@pytest.mark.parametrize("version", ["v1.2.0", "v1.2.0-3-g4b2e22f-dirty", "4b2e22f"])
+def test_parse_fw_version_payload_extracts_the_version(version):
+    payload = json.dumps({"value": version}).encode("utf-8")
+    assert mqtt_client.parse_fw_version_payload(payload) == version
+
+
+def test_parse_fw_version_payload_strips_surrounding_whitespace():
+    assert mqtt_client.parse_fw_version_payload(b'{"value": "  v1.0.0\\n"}') == "v1.0.0"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'{"value": ""}',
+        b'{"value": "   "}',
+        b'{"value": 12}',
+        b'{"value": null}',
+        b'{"value": "v1\\u0000"}',  # caractère non imprimable
+        json.dumps({"value": "v" * 65}).encode("utf-8"),  # trop long
+        b'{"unexpected": "v1.0.0"}',
+    ],
+)
+def test_parse_fw_version_payload_rejects_invalid_values(payload):
+    with pytest.raises(ValueError):
+        mqtt_client.parse_fw_version_payload(payload)
+
+
+@pytest.mark.parametrize("key", ["ip", "fw_version"])
+def test_is_device_info_key_true_for_device_info_keys(key):
+    assert mqtt_client.is_device_info_key(key) is True
+
+
+@pytest.mark.parametrize("key", ["vanne_1", "water_level_cm", "ip_address"])
+def test_is_device_info_key_false_for_readings(key):
+    assert mqtt_client.is_device_info_key(key) is False
+
+
+def test_parse_device_info_maps_each_key_to_its_devices_column():
+    assert mqtt_client.parse_device_info("ip", b'{"value": "192.168.1.50"}') == ("ip_address", "192.168.1.50")
+    assert mqtt_client.parse_device_info("fw_version", b'{"value": "v1.2.0"}') == ("fw_version", "v1.2.0")
+
+
 def test_parse_payload_valve_unrecognized_state_raises():
     with pytest.raises(ValueError):
         mqtt_client.parse_payload("jardin-1", "vanne_1", b'{"state": "maybe"}')

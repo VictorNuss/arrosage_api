@@ -46,7 +46,9 @@ log = logging.getLogger("dashboard.live_state")
 
 TOPIC = "arrosage/+/etat/#"
 VALVE_METRIC_HINT = "vanne"
-IP_METRIC_KEY = "ip"
+# Clés décrivant le device lui-même (IP, version firmware) plutôt qu'une
+# mesure : elles alimentent la table devices via ingest, pas ce cache.
+DEVICE_INFO_KEYS = {"ip", "fw_version"}
 
 _TRUTHY = {"open", "on", "true", "1", "ouvert", "ouverte"}
 _FALSY = {"closed", "off", "false", "0", "ferme", "fermee", "fermé", "fermée"}
@@ -140,11 +142,11 @@ def _on_message(client, userdata, message):
         return
     device_id, metric = parsed
 
-    if metric == IP_METRIC_KEY:
-        # L'IP du device alimente devices.ip_address (via ingest), pas ce
-        # cache : ce n'est pas une "lecture" au sens capteur/vanne, et sa
-        # valeur (chaîne) ne correspondrait à aucune des deux coercions
-        # ci-dessous.
+    if metric in DEVICE_INFO_KEYS:
+        # Alimentent devices.ip_address / devices.fw_version (via ingest),
+        # pas ce cache : ce ne sont pas des "lectures" au sens capteur/vanne,
+        # et leur valeur (chaîne) ne correspondrait à aucune des deux
+        # coercions ci-dessous.
         return
 
     try:

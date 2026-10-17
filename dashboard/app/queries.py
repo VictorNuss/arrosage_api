@@ -32,6 +32,7 @@ def get_devices() -> pd.DataFrame:
         devices.c.lat,
         devices.c.lon,
         devices.c.ip_address,
+        devices.c.fw_version,
     ).order_by(devices.c.device_id)
     with engine.connect() as conn:
         return pd.read_sql_query(stmt, conn)
