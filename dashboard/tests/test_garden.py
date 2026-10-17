@@ -151,3 +151,17 @@ def test_zone_card_renders_with_minimal_data():
             "valve_states": {}, "last_watering": {}, "sun_hours": {1: 2.5}, "recent": {}}
     card = garden_tab.build_zone_card(_zone(), data)
     assert card is not None
+
+
+# --- programmes : condition "selon la culture de chaque zone" ---------------------
+
+def test_program_summary_and_run_detail_for_zone_condition():
+    from app import callbacks
+
+    assert callbacks._format_conditions_summary([{"type": "zone_crop_moisture"}]) == ["selon la culture de chaque zone"]
+    partial = {"status": "executed", "skip_reason": "Tomates déjà assez humide pour Tomate (60% ≥ 40%)",
+               "valves_triggered": [{"metric": "vanne_2", "duration_s": 300}]}
+    assert callbacks._format_run_detail(partial) == (
+        "vanne_2 (5min) · ignorées : Tomates déjà assez humide pour Tomate (60% ≥ 40%)"
+    )
+    assert callbacks._format_run_detail({"status": "skipped", "skip_reason": "pluie", "valves_triggered": None}) == "pluie"

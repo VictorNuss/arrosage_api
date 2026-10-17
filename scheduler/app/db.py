@@ -6,7 +6,16 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import OperationalError
 
 from . import config
-from .schema import sensor_readings, watering_program_valves, watering_programs, watering_runs, weather_forecast
+from .schema import (
+    crop_profiles,
+    garden_zone_sensors,
+    garden_zones,
+    sensor_readings,
+    watering_program_valves,
+    watering_programs,
+    watering_runs,
+    weather_forecast,
+)
 
 log = logging.getLogger("scheduler.db")
 
@@ -76,6 +85,43 @@ def get_latest_soil_moisture(engine, device_ids):
     with engine.connect() as conn:
         rows = conn.execute(stmt).mappings().all()
     return {row["device_id"]: {"value": row["value"], "time": row["time"]} for row in rows}
+
+
+def get_zones_by_valve(engine):
+    """Zones du potager ayant une vanne, indexées par (device_id, metric) :
+    {"name", "crop_name", "moisture_min", "dry_ref", "wet_ref", "sensors"}.
+    crop_name / moisture_min valent None si la zone n'a pas de culture."""
+    stmt = (
+        select(
+            garden_zones.c.id,
+            garden_zones.c.name,
+            garden_zones.c.valve_device_id,
+            garden_zones.c.valve_metric,
+            garden_zones.c.moisture_dry_ref,
+            garden_zones.c.moisture_wet_ref,
+            crop_profiles.c.name.label("crop_name"),
+            crop_profiles.c.moisture_min,
+        )
+        .select_from(garden_zones.outerjoin(crop_profiles, crop_profiles.c.id == garden_zones.c.crop_profile_id))
+        .where(garden_zones.c.valve_device_id.isnot(None))
+    )
+    with engine.connect() as conn:
+        zones = conn.execute(stmt).mappings().all()
+        sensor_rows = conn.execute(select(garden_zone_sensors.c.zone_id, garden_zone_sensors.c.device_id)).all()
+    sensors_by_zone = {}
+    for zone_id, device_id in sensor_rows:
+        sensors_by_zone.setdefault(zone_id, []).append(device_id)
+    return {
+        (zone["valve_device_id"], zone["valve_metric"]): {
+            "name": zone["name"],
+            "crop_name": zone["crop_name"],
+            "moisture_min": zone["moisture_min"],
+            "dry_ref": zone["moisture_dry_ref"],
+            "wet_ref": zone["moisture_wet_ref"],
+            "sensors": sorted(sensors_by_zone.get(zone["id"], [])),
+        }
+        for zone in zones
+    }
 
 
 def get_rain_forecast_rows(engine):

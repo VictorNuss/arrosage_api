@@ -42,6 +42,14 @@ def _is_due(program, now):
     return now.hour == start_time.hour and now.minute == start_time.minute
 
 
+def _zone_condition(program):
+    """Condition "seuil d'humidité selon la culture de la zone" du programme,
+    ou None (voir conditions.filter_valves_by_zone_moisture)."""
+    return next(
+        (c for c in program["conditions"] or [] if c.get("type") == conditions.ZONE_CROP_MOISTURE), None
+    )
+
+
 def run_cycle(engine):
     # datetime.now() est en heure locale du conteneur (TZ=Europe/Paris) ;
     # .astimezone() y attache l'info de fuseau. Les comparaisons avec des
@@ -64,6 +72,10 @@ def run_cycle(engine):
         if condition.get("type") == "max_soil_moisture"
         for device_id in condition.get("device_ids") or []
     }
+    zones_by_valve = {}
+    if any(_zone_condition(program) for program in due_programs):
+        zones_by_valve = db.get_zones_by_valve(engine)
+        soil_device_ids |= {device_id for zone in zones_by_valve.values() for device_id in zone["sensors"]}
     soil_readings = db.get_latest_soil_moisture(engine, soil_device_ids)
 
     for program in due_programs:
@@ -78,15 +90,27 @@ def run_cycle(engine):
         ok, reason = conditions.evaluate_conditions(program["conditions"] or [], context)
 
         if ok:
+            valves = program["valves"]
+            zone_skips = []
+            zone_condition = _zone_condition(program)
+            if zone_condition is not None:
+                valves, zone_skips = conditions.filter_valves_by_zone_moisture(
+                    valves, zones_by_valve, soil_readings, now, zone_condition
+                )
             valves_triggered = [
                 {
                     "device_id": valve["device_id"],
                     "metric": valve["metric"],
                     "duration_s": valve["duration_s"] or program["default_duration_s"],
                 }
-                for valve in program["valves"]
+                for valve in valves
             ]
-            status, skip_reason = "executed", None
+            # Arrosage partiel : les zones ignorées sont notées dans skip_reason
+            # même si le programme a bien arrosé les autres.
+            skip_reason = "; ".join(zone_skips) or None
+            status = "executed" if valves_triggered else "skipped"
+            if not valves_triggered:
+                valves_triggered = None
         else:
             valves_triggered = None
             status, skip_reason = "skipped", reason
@@ -108,9 +132,10 @@ def run_cycle(engine):
                         valve["metric"],
                         program["name"],
                     )
-            log.info("Programme '%s' exécuté (%s vanne(s))", program["name"], len(valves_triggered))
+            log.info("Programme '%s' exécuté (%s vanne(s))%s", program["name"], len(valves_triggered),
+                     f", zones ignorées : {skip_reason}" if skip_reason else "")
         else:
-            log.info("Programme '%s' ignoré: %s", program["name"], reason)
+            log.info("Programme '%s' ignoré: %s", program["name"], skip_reason)
 
 
 def main():

@@ -197,6 +197,19 @@ def build_programs_tab():
                                 "(pile vide, hors de portée…), le programme arrose quand même.",
                                 className="form-text",
                             ),
+                            dbc.Switch(
+                                id="program-form-cond-zone-enabled",
+                                label="Selon la culture de chaque zone (onglet Potager)",
+                                value=True,
+                                className="mt-3",
+                            ),
+                            html.Div(
+                                "Vanne par vanne : n'arrose pas une zone dont le sol est déjà au-dessus du "
+                                "seuil bas de sa culture (ex. Tomate 40 %, Salade 55 %), les autres zones du "
+                                "programme sont arrosées normalement. Une vanne sans zone, sans culture ou "
+                                "sans mesure récente arrose toujours.",
+                                className="form-text",
+                            ),
                         ]
                     ),
                     dbc.ModalFooter(
