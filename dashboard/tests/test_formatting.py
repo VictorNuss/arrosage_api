@@ -45,3 +45,16 @@ def test_format_last_seen(age, expected):
 @pytest.mark.parametrize("ts", [None, pd.NaT])
 def test_format_last_seen_never(ts):
     assert formatting.format_last_seen(ts) == "jamais"
+
+
+@pytest.mark.parametrize(
+    "metric,value,unit,expected",
+    [
+        ("temperature_c", 18.34, "°C", "18.3 °C"),
+        ("illuminance_lux", 1200.4, "lx", "1200 lx"),
+        ("battery_pct", 87.0, "%", "87 %"),
+        ("zigbee_lqi", 110.0, None, "110"),
+    ],
+)
+def test_format_metric_value(metric, value, unit, expected):
+    assert formatting.format_metric_value(metric, value, unit) == expected

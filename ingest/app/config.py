@@ -7,6 +7,11 @@ MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD") or None
 MQTT_TOPIC = "arrosage/+/etat/#"
 VALVE_METRIC_HINT = "vanne"
 
+# Topic racine de Zigbee2MQTT (son réglage mqtt.base_topic). Les états de
+# capteurs Zigbee publiés dessous sont republiés dans le contrat device
+# (voir zigbee.py). Vide = intégration désactivée.
+ZIGBEE2MQTT_BASE_TOPIC = os.environ.get("ZIGBEE2MQTT_BASE_TOPIC", "zigbee2mqtt").strip().strip("/")
+
 # Clé publiée par chaque device (à sa connexion MQTT et en réponse à un
 # get_status) pour faire connaître son IP locale fixe : arrosage/<device_id>
 # /etat/ip, {"value": "192.168.1.50"}. Contrairement aux autres clés, la

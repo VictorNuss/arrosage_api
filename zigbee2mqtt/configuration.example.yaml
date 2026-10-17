@@ -1,0 +1,44 @@
+# Configuration Zigbee2MQTT de départ. À copier une seule fois en
+# zigbee2mqtt/data/configuration.yaml (dossier ignoré par git) : Zigbee2MQTT
+# y écrit ensuite lui-même (clés réseau générées, appareils appairés...).
+#
+#   mkdir -p zigbee2mqtt/data
+#   cp zigbee2mqtt/configuration.example.yaml zigbee2mqtt/data/configuration.yaml
+#
+# Doc complète : https://www.zigbee2mqtt.io/guide/configuration/
+version: 4
+
+mqtt:
+  # Doit correspondre à ZIGBEE2MQTT_BASE_TOPIC côté ingest (défaut identique).
+  base_topic: zigbee2mqtt
+  server: mqtt://mosquitto:1883
+  # Si Mosquitto exige un mot de passe :
+  # user: arrosage
+  # password: changez-moi
+
+serial:
+  # Clé USB (ZBDongle-E / ZBDongle-P...) : chemin DANS le conteneur, voir
+  # ZIGBEE_ADAPTER dans .env pour le chemin côté hôte.
+  port: /dev/ttyACM0
+  # "ember" pour une ZBDongle-E (EFR32), "zstack" pour une ZBDongle-P (CC2652).
+  adapter: ember
+  # Coordinateur réseau (SMLIGHT SLZB-06...) : remplacer les deux lignes
+  # ci-dessus par son adresse, ex :
+  # port: tcp://192.168.1.60:6638
+  # adapter: ember
+
+# Interface web pour appairer et renommer les capteurs : http://<serveur>:8080
+frontend:
+  enabled: true
+  port: 8080
+
+# Le friendly_name devient le device_id dans l'appli : renommer chaque
+# capteur dans l'interface (ex : sol-potager), sans "/".
+advanced:
+  network_key: GENERATE
+  pan_id: GENERATE
+  ext_pan_id: GENERATE
+  log_level: info
+
+homeassistant:
+  enabled: false

@@ -57,6 +57,14 @@ def run_cycle(engine):
 
     rain_rows = db.get_rain_forecast_rows(engine)
     tank_value = db.get_latest_tank_value(engine)
+    soil_device_ids = {
+        device_id
+        for program in due_programs
+        for condition in program["conditions"] or []
+        if condition.get("type") == "max_soil_moisture"
+        for device_id in condition.get("device_ids") or []
+    }
+    soil_readings = db.get_latest_soil_moisture(engine, soil_device_ids)
 
     for program in due_programs:
         scheduled_for = datetime.combine(now.date(), program["start_time"], tzinfo=now.tzinfo)
@@ -65,6 +73,7 @@ def run_cycle(engine):
             "rain_rows": rain_rows,
             "tank_value_cm": tank_value,
             "tank_height_full_cm": config.TANK_HEIGHT_FULL_CM,
+            "soil_readings": soil_readings,
         }
         ok, reason = conditions.evaluate_conditions(program["conditions"] or [], context)
 

@@ -16,6 +16,10 @@ MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD") or None
 TANK_LEVEL_METRIC = "water_level_cm"
 TANK_HEIGHT_FULL_CM = float(os.environ.get("TANK_HEIGHT_FULL_CM", "150"))
 
+# Humidité du sol (ESP32 ou capteurs Zigbee republiés par ingest), pour la
+# condition "max_soil_moisture". Même métrique que dashboard/app/config.py.
+SOIL_MOISTURE_METRIC = "humidity_pct"
+
 # Fréquence de vérification des programmes dus. Une minute suffit largement
 # (les horaires de programme sont exprimés en HH:MM) et reste bon marché.
 CHECK_INTERVAL_SECONDS = 30

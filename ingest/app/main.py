@@ -6,7 +6,7 @@ import time
 
 import paho.mqtt.client as mqtt
 
-from . import config, db
+from . import config, db, zigbee
 from .mqtt_client import is_device_info_key, parse_device_info, parse_payload, parse_topic
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -37,10 +37,31 @@ def _request_resync(client, engine):
 def _on_connect(client, userdata, flags, reason_code, properties=None):
     log.info("Connecté au broker MQTT, abonnement à %s", config.MQTT_TOPIC)
     client.subscribe(config.MQTT_TOPIC, qos=1)
+    if config.ZIGBEE2MQTT_BASE_TOPIC:
+        zigbee_topic = f"{config.ZIGBEE2MQTT_BASE_TOPIC}/+"
+        log.info("Abonnement aux capteurs Zigbee2MQTT sur %s", zigbee_topic)
+        client.subscribe(zigbee_topic, qos=1)
     _request_resync(client, userdata)
 
 
+def _on_zigbee_message(client, device_id, message):
+    """Republie l'état d'un capteur Zigbee dans le contrat device : il est
+    stocké quand ingest reçoit ces messages republiés, pas ici."""
+    try:
+        readings = zigbee.translate_payload(message.payload)
+    except Exception:
+        log.exception("Payload Zigbee2MQTT invalide sur %s, message ignoré", message.topic)
+        return
+    if readings:
+        zigbee.republish(client, device_id, readings)
+
+
 def _on_message(client, userdata, message):
+    zigbee_device_id = zigbee.parse_topic(message.topic)
+    if zigbee_device_id is not None:
+        _on_zigbee_message(client, zigbee_device_id, message)
+        return
+
     parsed_topic = parse_topic(message.topic)
     if parsed_topic is None:
         log.warning("Topic inattendu ignoré: %s", message.topic)

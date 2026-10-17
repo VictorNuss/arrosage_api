@@ -25,7 +25,15 @@ _METRIC_DISPLAY = {
     "temperature_c": ("Température", "bi-thermometer-half"),
     "humidity_pct": ("Humidité du sol", "bi-moisture"),
     "battery_v": ("Alimentation", "bi-battery-half"),
+    # Capteurs de sol Zigbee (republiés par ingest, voir ingest/app/zigbee.py).
+    "air_humidity_pct_rh": ("Humidité de l'air", "bi-cloud"),
+    "illuminance_lux": ("Luminosité", "bi-sun"),
+    "fertility_us_cm": ("Fertilité (conductivité)", "bi-flower1"),
+    "battery_pct": ("Batterie", "bi-battery-half"),
+    "zigbee_lqi": ("Signal Zigbee", "bi-reception-4"),
 }
+# Mesures sans intérêt après la virgule (lux, µS/cm, %, qualité de lien).
+_INTEGER_METRICS = {"illuminance_lux", "fertility_us_cm", "battery_pct", "zigbee_lqi"}
 _VALVE_PREFIX = "vanne_"
 
 
@@ -44,3 +52,10 @@ def metric_icon(metric: str) -> str:
     if metric.startswith(_VALVE_PREFIX):
         return "bi-droplet"
     return "bi-activity"
+
+
+def format_metric_value(metric: str, value, unit=None) -> str:
+    """Ex : ("temperature_c", 18.34, "°C") -> "18.3 °C",
+    ("illuminance_lux", 1200.0, "lx") -> "1200 lx"."""
+    number = f"{value:.0f}" if metric in _INTEGER_METRICS else f"{value:.1f}"
+    return f"{number} {unit}" if unit else number

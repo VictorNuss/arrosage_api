@@ -16,6 +16,8 @@ _UNIT_SUFFIXES = {
     "_c": "°C",
     "_v": "V",
     "_pct_rh": "%RH",
+    "_lux": "lx",
+    "_us_cm": "µS/cm",
 }
 
 
@@ -24,7 +26,8 @@ def is_valve_metric(metric):
 
 
 def _infer_unit(metric):
-    for suffix, unit in _UNIT_SUFFIXES.items():
+    # Suffixe le plus long d'abord : "_us_cm" ne doit pas être pris pour "_cm".
+    for suffix, unit in sorted(_UNIT_SUFFIXES.items(), key=lambda item: -len(item[0])):
         if metric.endswith(suffix):
             return unit
     return None

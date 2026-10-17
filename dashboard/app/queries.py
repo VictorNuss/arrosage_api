@@ -246,6 +246,20 @@ def get_known_valves() -> list[dict]:
         return pd.read_sql_query(stmt, conn).to_dict("records")
 
 
+def get_soil_sensors() -> list[dict]:
+    """Appareils ayant déjà publié une humidité du sol, avec leur nom :
+    [{"device_id": ..., "name": ...}], triés par nom."""
+    stmt = (
+        select(sensor_readings.c.device_id, func.coalesce(devices.c.name, sensor_readings.c.device_id).label("name"))
+        .select_from(sensor_readings.outerjoin(devices, devices.c.device_id == sensor_readings.c.device_id))
+        .where(sensor_readings.c.metric == config.SOIL_MOISTURE_METRIC)
+        .distinct()
+    )
+    with engine.connect() as conn:
+        rows = pd.read_sql_query(stmt, conn).to_dict("records")
+    return sorted(rows, key=lambda r: (r["name"], r["device_id"]))
+
+
 def get_programs() -> list[dict]:
     """Tous les programmes d'arrosage, chacun avec ses vannes."""
     with engine.connect() as conn:

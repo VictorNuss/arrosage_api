@@ -7,8 +7,8 @@ from dash.exceptions import PreventUpdate
 from plotly.subplots import make_subplots
 import dash_bootstrap_components as dbc
 
-from . import config, mqtt_control, queries, valve_timers
-from .formatting import format_last_seen, metric_icon, metric_label
+from . import config, mqtt_control, queries, soil_panel, valve_timers
+from .formatting import format_last_seen, format_metric_value, metric_icon, metric_label
 
 _VALVE_OPEN_COLOR = "#28a745"
 _VALVE_CLOSED_COLOR = "#dc3545"
@@ -255,8 +255,7 @@ def _build_metric_item(reading):
         status = _valve_status(reading["value"])
         value = dbc.Badge(_valve_label(status, reading.get("direction")).lower(), color=_VALVE_BADGE_COLORS[status])
     else:
-        unit = f" {reading['unit']}" if reading["unit"] else ""
-        value = html.Span(f"{reading['value']:.1f}{unit}", className="fw-semibold")
+        value = html.Span(format_metric_value(metric, reading["value"], reading["unit"]), className="fw-semibold")
     return dbc.ListGroupItem(
         [
             html.Span([html.I(className=f"bi {metric_icon(metric)} me-2 text-primary"), metric_label(metric)], title=metric),
@@ -308,7 +307,14 @@ def _format_conditions_summary(conditions_list):
             labels.append(f"pas de pluie ({condition.get('window_hours', 3)}h)")
         elif condition_type == "min_tank_pct":
             labels.append(f"cuve ≥ {condition.get('min_pct')}%")
+        elif condition_type == "max_soil_moisture":
+            sensor_count = len(condition.get("device_ids") or [])
+            labels.append(f"sol < {condition.get('max_pct')}% ({sensor_count} capteur{'s' if sensor_count > 1 else ''})")
     return labels
+
+
+def _build_soil_sensor_options():
+    return [{"label": s["name"], "value": s["device_id"]} for s in queries.get_soil_sensors()]
 
 
 def _valve_option_value(device_id, metric):
@@ -540,6 +546,11 @@ def register_callbacks(app):
             className="g-2 h-100",
         )
 
+    @app.callback(Output("soil-panel", "children"), Input("global-interval", "n_intervals"))
+    def update_soil_panel(_n):
+        rows = soil_panel.soil_sensor_rows(queries.get_devices(), queries.get_latest_readings())
+        return soil_panel.build_soil_panel(rows)
+
     @app.callback(Output("overview-cards", "children"), Input("global-interval", "n_intervals"))
     def update_overview(_n):
         devices = queries.get_devices()
@@ -566,7 +577,10 @@ def register_callbacks(app):
             {"label": row.get("name") or row["device_id"], "value": row["device_id"]}
             for _, row in devices.iterrows()
         ]
-        metric_options = [{"label": m, "value": m} for m in queries.get_known_metrics()]
+        metric_options = [
+            {"label": m if metric_label(m) == m else f"{metric_label(m)} ({m})", "value": m}
+            for m in queries.get_known_metrics()
+        ]
         end_date = datetime.now(timezone.utc).date()
         start_date = end_date - timedelta(days=2)
         return device_options, metric_options, start_date, end_date
@@ -607,6 +621,10 @@ def register_callbacks(app):
         Output("program-form-cond-rain-hours", "value"),
         Output("program-form-cond-tank-enabled", "value"),
         Output("program-form-cond-tank-pct", "value"),
+        Output("program-form-cond-soil-enabled", "value"),
+        Output("program-form-cond-soil-pct", "value"),
+        Output("program-form-cond-soil-sensors", "value"),
+        Output("program-form-cond-soil-sensors", "options"),
         Output("program-form-error", "children", allow_duplicate=True),
         Input("new-program-btn", "n_clicks"),
         Input({"type": "program-edit-btn", "program_id": ALL}, "n_clicks"),
@@ -617,6 +635,7 @@ def register_callbacks(app):
             raise PreventUpdate
 
         valve_options = _build_valve_options()
+        soil_sensor_options = _build_soil_sensor_options()
         no_valves_warning = (
             dbc.Alert(
                 "Aucune vanne détectée pour l'instant : elle doit avoir déjà envoyé son état "
@@ -644,6 +663,10 @@ def register_callbacks(app):
                 3,
                 True,
                 10,
+                False,
+                config.DEFAULT_SOIL_MAX_PCT,
+                [],
+                soil_sensor_options,
                 no_valves_warning,
             )
 
@@ -654,6 +677,7 @@ def register_callbacks(app):
         conditions_by_type = {c["type"]: c for c in (program["conditions"] or [])}
         rain = conditions_by_type.get("no_rain_forecast")
         tank = conditions_by_type.get("min_tank_pct")
+        soil = conditions_by_type.get("max_soil_moisture")
         valve_values = [_valve_option_value(v["device_id"], v["metric"]) for v in program["valves"]]
 
         return (
@@ -670,6 +694,10 @@ def register_callbacks(app):
             rain.get("window_hours", 3) if rain else 3,
             tank is not None,
             tank.get("min_pct", 10) if tank else 10,
+            soil is not None,
+            soil.get("max_pct", config.DEFAULT_SOIL_MAX_PCT) if soil else config.DEFAULT_SOIL_MAX_PCT,
+            soil.get("device_ids", []) if soil else [],
+            soil_sensor_options,
             no_valves_warning,
         )
 
@@ -697,6 +725,9 @@ def register_callbacks(app):
         State("program-form-cond-rain-hours", "value"),
         State("program-form-cond-tank-enabled", "value"),
         State("program-form-cond-tank-pct", "value"),
+        State("program-form-cond-soil-enabled", "value"),
+        State("program-form-cond-soil-pct", "value"),
+        State("program-form-cond-soil-sensors", "value"),
         State("programs-version", "data"),
         prevent_initial_call=True,
     )
@@ -712,6 +743,9 @@ def register_callbacks(app):
         rain_hours,
         tank_enabled,
         tank_pct,
+        soil_enabled,
+        soil_pct,
+        soil_sensors,
         version,
     ):
         if not n_clicks:
@@ -728,6 +762,8 @@ def register_callbacks(app):
             errors.append("l'heure de déclenchement est obligatoire")
         if not duration_min or duration_min <= 0:
             errors.append("la durée doit être positive")
+        if soil_enabled and not soil_sensors:
+            errors.append("choisissez au moins un capteur de sol (ou désactivez la condition)")
 
         if errors:
             # A l'intérieur de la modale (pas dans programs-feedback, qui est
@@ -748,6 +784,15 @@ def register_callbacks(app):
             )
         if tank_enabled:
             conditions_list.append({"type": "min_tank_pct", "min_pct": int(tank_pct or 0)})
+        if soil_enabled:
+            conditions_list.append(
+                {
+                    "type": "max_soil_moisture",
+                    "max_pct": int(soil_pct if soil_pct is not None else config.DEFAULT_SOIL_MAX_PCT),
+                    "device_ids": list(soil_sensors),
+                    "max_age_hours": config.SOIL_STALE_HOURS,
+                }
+            )
 
         valves = [tuple(v.split("::", 1)) for v in valve_values]
         hour, minute = (int(part) for part in start_time_str.split(":")[:2])

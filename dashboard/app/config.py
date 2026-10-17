@@ -27,6 +27,22 @@ TANK_LEVEL_METRIC = "water_level_cm"
 TANK_HEIGHT_FULL_CM = float(os.environ.get("TANK_HEIGHT_FULL_CM", "150"))
 TANK_FULL_THRESHOLD_PCT = 95
 
+# Capteurs d'humidité du sol (ESP32 ou Zigbee, même clé "humidity_pct") :
+# panneau "Humidité du sol" et condition de programme "sol déjà humide".
+# Même métrique que scheduler/app/config.py : à garder synchronisée.
+SOIL_MOISTURE_METRIC = "humidity_pct"
+SOIL_BATTERY_METRIC = "battery_pct"
+# Couleur de la jauge : sous SOIL_DRY_PCT le sol est "sec", au-dessus de
+# SOIL_WET_PCT il est "détrempé". Ordres de grandeur, à ajuster selon le sol.
+SOIL_DRY_PCT = 30
+SOIL_WET_PCT = 70
+LOW_BATTERY_PCT = 20
+# Un capteur Zigbee sur pile publie toutes les 30-60 min environ : au-delà
+# de ce délai sans nouvelle mesure, sa valeur est signalée comme ancienne.
+SOIL_STALE_HOURS = 6
+# Valeurs par défaut de la condition de programme "sol déjà humide".
+DEFAULT_SOIL_MAX_PCT = 60
+
 # En dessous de ce cumul (mm) sur la fenêtre considérée, on affiche "pas de
 # pluie prévue" plutôt que de signaler un bruit de mesure/arrondi.
 RAIN_THRESHOLD_MM = 0.2

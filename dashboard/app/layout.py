@@ -50,6 +50,7 @@ def build_overview_tab():
                 ],
                 className="g-3 pb-3",
             ),
+            html.Div(id="soil-panel"),
             html.Div(id="overview-cards"),
         ],
         className="pt-3",
@@ -190,6 +191,48 @@ def build_programs_tab():
                                     ],
                                     md=4,
                                 ),
+                                className="mb-2",
+                            ),
+                            dbc.Switch(
+                                id="program-form-cond-soil-enabled",
+                                label="Ne pas arroser si le sol est déjà humide",
+                                value=False,
+                            ),
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        [
+                                            dbc.Label("Humidité moyenne max (%)", size="sm"),
+                                            dbc.Input(
+                                                id="program-form-cond-soil-pct",
+                                                type="number",
+                                                min=0,
+                                                max=100,
+                                                value=config.DEFAULT_SOIL_MAX_PCT,
+                                                size="sm",
+                                            ),
+                                        ],
+                                        md=4,
+                                    ),
+                                    dbc.Col(
+                                        [
+                                            dbc.Label("Capteurs de sol", size="sm"),
+                                            dcc.Dropdown(
+                                                id="program-form-cond-soil-sensors",
+                                                multi=True,
+                                                placeholder="Capteurs de la zone arrosée",
+                                            ),
+                                        ],
+                                        md=8,
+                                    ),
+                                ],
+                                className="g-2",
+                            ),
+                            html.Div(
+                                "Moyenne des dernières mesures de moins de "
+                                f"{config.SOIL_STALE_HOURS} h des capteurs choisis. Sans mesure récente "
+                                "(pile vide, hors de portée…), le programme arrose quand même.",
+                                className="form-text",
                             ),
                         ]
                     ),
