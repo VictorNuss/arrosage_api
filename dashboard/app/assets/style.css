@@ -209,3 +209,47 @@ body {
     border-radius: 0.5rem;
     padding: 0.35rem 0.7rem;
 }
+
+/* --- Onglet Potager --------------------------------------------------------- */
+
+/* Jauge d'humidité : piste 0-100 %, bande = plage visée par la culture,
+   repère = humidité actuelle de la zone. */
+.moisture-track {
+    position: relative;
+    height: 0.6rem;
+    margin: 0.5rem 0 0.6rem;
+    border-radius: 0.3rem;
+    background: linear-gradient(90deg, #f5d7a1, #e9ecef 35%, #cfe2ff);
+}
+
+.moisture-target {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background-color: rgba(24, 188, 156, 0.45);
+    border-left: 2px solid #18bc9c;
+    border-right: 2px solid #18bc9c;
+}
+
+.moisture-marker {
+    position: absolute;
+    top: -0.3rem;
+    width: 0.35rem;
+    height: 1.2rem;
+    margin-left: -0.175rem;
+    border-radius: 0.2rem;
+    box-shadow: 0 0 0 2px #fff;
+}
+
+.garden-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.garden-chip {
+    background-color: var(--bs-light);
+    border-radius: 0.5rem;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.85rem;
+}

@@ -3,6 +3,7 @@ import dash_bootstrap_components as dbc
 
 from . import config
 from .firmware_tab import build_firmware_tab
+from .garden_tab import build_garden_tab
 from .history_tab import build_history_tab
 from .weather_tab import build_weather_tab
 
@@ -224,6 +225,7 @@ def build_layout():
             dbc.Tabs(
                 [
                     dbc.Tab(build_overview_tab(), label="Vue d'ensemble", tab_id="overview"),
+                    dbc.Tab(build_garden_tab(), label="Potager", tab_id="garden"),
                     dbc.Tab(build_history_tab(), label="Historique", tab_id="history"),
                     dbc.Tab(build_weather_tab(), label="Météo", tab_id="weather"),
                     dbc.Tab(build_firmware_tab(), label="Firmware", tab_id="firmware"),

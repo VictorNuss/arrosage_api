@@ -4,7 +4,7 @@ import dash
 import dash_bootstrap_components as dbc
 import plotly.io as pio
 
-from . import firmware_tab, history_tab, live_state, mqtt_control, weather_tab
+from . import firmware_tab, garden_tab, history_tab, live_state, mqtt_control, weather_tab
 from .callbacks import register_callbacks
 from .layout import build_layout
 
@@ -20,6 +20,7 @@ register_callbacks(app)
 firmware_tab.register_callbacks(app)
 weather_tab.register_callbacks(app)
 history_tab.register_callbacks(app)
+garden_tab.register_callbacks(app)
 
 live_state.start()
 

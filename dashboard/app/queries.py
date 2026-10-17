@@ -1,3 +1,4 @@
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -5,7 +6,10 @@ from sqlalchemy import create_engine, func, select
 
 from . import config, live_state
 from .schema import (
+    crop_profiles,
     devices,
+    garden_zone_sensors,
+    garden_zones,
     sensor_readings,
     sensor_readings_1min,
     sensor_readings_daily,
@@ -266,12 +270,13 @@ def get_rain_outlook() -> dict | None:
 
 
 def get_known_valves() -> list[dict]:
-    """Toutes les vannes déjà vues au moins une fois (device_id, metric)."""
+    """Toutes les vannes déjà vues au moins une fois (device_id, metric),
+    depuis le journal permanent valve_events : une vanne inutilisée depuis
+    plus longtemps que la conservation du brut reste connue."""
     stmt = (
-        select(sensor_readings.c.device_id, sensor_readings.c.metric)
-        .where(sensor_readings.c.metric.ilike(f"%{VALVE_METRIC_HINT}%"))
+        select(valve_events.c.device_id, valve_events.c.metric)
         .distinct()
-        .order_by(sensor_readings.c.device_id, sensor_readings.c.metric)
+        .order_by(valve_events.c.device_id, valve_events.c.metric)
     )
     with engine.connect() as conn:
         return pd.read_sql_query(stmt, conn).to_dict("records")
@@ -384,3 +389,73 @@ def get_recent_runs(limit: int = 20) -> pd.DataFrame:
     stmt = select(watering_runs).order_by(watering_runs.c.scheduled_for.desc()).limit(limit)
     with engine.connect() as conn:
         return pd.read_sql_query(stmt, conn)
+
+
+# --- Potager : zones et profils de culture -------------------------------------
+
+def _alpha_key(text: str) -> str:
+    """Tri alphabétique français : "Épinard" avec les E, pas après le Z
+    (la base trie octet par octet)."""
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+
+
+def get_crop_profiles() -> list[dict]:
+    with engine.connect() as conn:
+        rows = conn.execute(select(crop_profiles)).mappings().all()
+    return sorted((dict(row) for row in rows), key=lambda profile: _alpha_key(profile["name"]))
+
+
+def get_zones() -> list[dict]:
+    """Zones triées par nom, chacune avec "sensors" (liste de device_id) et
+    "crop" (profil de culture complet, ou None)."""
+    with engine.connect() as conn:
+        zones = [dict(row) for row in conn.execute(select(garden_zones).order_by(garden_zones.c.name)).mappings()]
+        sensor_rows = conn.execute(
+            select(garden_zone_sensors.c.zone_id, garden_zone_sensors.c.device_id).order_by(
+                garden_zone_sensors.c.device_id
+            )
+        ).all()
+    profiles = {profile["id"]: profile for profile in get_crop_profiles()}
+    sensors_by_zone = {}
+    for zone_id, device_id in sensor_rows:
+        sensors_by_zone.setdefault(zone_id, []).append(device_id)
+    for zone in zones:
+        zone["sensors"] = sensors_by_zone.get(zone["id"], [])
+        zone["crop"] = profiles.get(zone["crop_profile_id"])
+    return zones
+
+
+def get_zone(zone_id: int) -> dict | None:
+    return next((zone for zone in get_zones() if zone["id"] == zone_id), None)
+
+
+def save_zone(zone_id, name, valve, sensors, crop_profile_id, moisture_dry_ref, moisture_wet_ref, notes) -> int:
+    """Crée la zone si zone_id est None, sinon la met à jour. valve :
+    (device_id, metric) ou None. Lève sqlalchemy.exc.IntegrityError si la
+    vanne arrose déjà une autre zone."""
+    valve_device_id, valve_metric = valve if valve else (None, None)
+    values = dict(
+        name=name,
+        valve_device_id=valve_device_id,
+        valve_metric=valve_metric,
+        crop_profile_id=crop_profile_id,
+        moisture_dry_ref=moisture_dry_ref,
+        moisture_wet_ref=moisture_wet_ref,
+        notes=notes,
+    )
+    with engine.begin() as conn:
+        if zone_id is None:
+            zone_id = conn.execute(
+                garden_zones.insert().values(**values).returning(garden_zones.c.id)
+            ).scalar_one()
+        else:
+            conn.execute(garden_zones.update().where(garden_zones.c.id == zone_id).values(**values))
+            conn.execute(garden_zone_sensors.delete().where(garden_zone_sensors.c.zone_id == zone_id))
+        if sensors:
+            conn.execute(garden_zone_sensors.insert(), [{"zone_id": zone_id, "device_id": d} for d in sensors])
+    return zone_id
+
+
+def delete_zone(zone_id: int) -> None:
+    with engine.begin() as conn:
+        conn.execute(garden_zones.delete().where(garden_zones.c.id == zone_id))

@@ -285,6 +285,18 @@ Puis cinq onglets :
   Zigbee, avec alerte de pile faible et signalement des mesures de plus de
   6 h), et une carte par appareil avec ses dernières valeurs connues.
   Rafraîchi toutes les 15s.
+- **Potager** : une carte par zone. Une zone = une vanne + ses capteurs de
+  sol + une culture (bibliothèque de profils : tomate, salade, courgette...
+  avec plage d'humidité visée, type d'arrosage, ensoleillement souhaité,
+  sensibilité au gel / mildiou). La carte montre l'humidité du sol par
+  rapport à la plage de la culture (trop sec / dans la cible / trop
+  humide), la température, l'humidité de l'air, les heures de plein soleil
+  du jour, la fertilité (conductivité) si le capteur la fournit, l'état de
+  la vanne et le dernier arrosage, et des alertes (gel, forte chaleur,
+  conditions à mildiou, pile faible, capteur muet). Calibration facultative
+  par zone : valeur brute "sol sec au toucher" et "sol gorgé d'eau ~1 h
+  après un gros arrosage" (bouton "Valeur actuelle"), l'humidité est alors
+  affichée sur cette échelle 0-100, celle des profils de culture.
 - **Historique** : tous les appareils et toutes les mesures d'emblée
   (filtre d'appareils optionnel), sur 24 h / 7 jours / 30 jours / 1 an.
   Arrosages : nombre et durée totale par vanne, puis une frise (une barre
