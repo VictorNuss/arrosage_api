@@ -47,6 +47,15 @@ sensor_readings = Table(
     Column("unit", String),
 )
 
+valve_events = Table(
+    "valve_events",
+    metadata,
+    Column("time", TIMESTAMP(timezone=True), nullable=False),
+    Column("device_id", String, nullable=False),
+    Column("metric", String, nullable=False),
+    Column("value", Double, nullable=False),
+)
+
 sensor_readings_hourly = Table(
     "sensor_readings_hourly",
     metadata,

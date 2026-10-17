@@ -165,21 +165,33 @@ mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/vanne_1 -m '{
 ## Base de données
 
 Le schéma (`db/init/*.sql`, exécutés dans l'ordre alphabétique) est appliqué
-automatiquement au premier démarrage du conteneur `timescaledb` — sur un
-volume déjà initialisé, un nouveau fichier `00N_*.sql` ne s'exécute pas tout
-seul, il faut l'appliquer à la main (`docker compose exec -T timescaledb
-psql -U arrosage -d arrosage -f - < db/init/00N_fichier.sql`). Il crée :
+automatiquement au premier démarrage du conteneur `timescaledb`, sur un
+volume vide uniquement. Le projet étant encore en phase de test, il n'y a
+pas de migrations : après une modification du schéma, on repart d'une base
+vide (`docker compose down -v` puis `docker compose up -d`). Il crée :
 
 - `devices` : appareils connus (auto-alimentée par `ingest`), avec
   `ip_address` (IP locale fixe, découverte automatiquement via la clé MQTT
   `ip` — voir plus haut — et modifiable manuellement en repli depuis
   l'onglet Firmware du dashboard, utilisée pour l'OTA) et `fw_version`
-  (version du firmware en cours, clé MQTT `fw_version`, migration
-  `004_add_device_fw_version.sql`),
-- `sensor_readings` : hypertable des mesures (une ligne par métrique),
-  compressée au-delà de 7 jours, avec un agrégat continu horaire
-  (`sensor_readings_hourly`) utilisé par le dashboard pour les longues
-  périodes,
+  (version du firmware en cours, clé MQTT `fw_version`),
+- `sensor_readings` : hypertable des mesures brutes (une ligne par
+  métrique, au rythme du firmware, ~5 s), compressée au-delà de 2 jours et
+  **conservée 15 jours**, puis résumée par paliers (agrégats continus
+  TimescaleDB) :
+
+  | palier                   | résolution          | conservation | utilisé pour            |
+  |--------------------------|---------------------|--------------|-------------------------|
+  | `sensor_readings`        | ~5 s (brut)         | 15 jours     | dernières valeurs       |
+  | `sensor_readings_1min`   | 1 minute            | 15 jours     | historique 24 h / 7 j   |
+  | `sensor_readings_hourly` | 1 heure             | 3 ans        | historique 30 jours     |
+  | `sensor_readings_daily`  | 1 jour (heure locale) | illimitée  | historique 1 an         |
+
+- `valve_events` : journal **permanent** des changements d'état des vannes
+  (écrit par `ingest` en plus de `sensor_readings`) : quelques lignes par
+  arrosage, il survit à la purge du brut et sert à calculer les arrosages
+  (frise, durées, comparaison d'une année à l'autre) sur n'importe quelle
+  période — une moyenne horaire d'un état 0/1 ne dirait rien,
 - `weather_observed` : hypertable des observations passées (pluvio/température),
 - `weather_forecast` : table classique (pas un historique) — voir plus bas,
 - `watering_programs` / `watering_program_valves` : programmes d'arrosage
@@ -263,12 +275,14 @@ Puis cinq onglets :
   6 h), et une carte par appareil avec ses dernières valeurs connues.
   Rafraîchi toutes les 15s.
 - **Historique** : tous les appareils et toutes les mesures d'emblée
-  (filtre d'appareils optionnel), sur 24 h / 7 jours / 30 jours. Les
-  arrosages sont présentés en frise (une ligne par vanne, une barre par
-  ouverture) avec le nombre d'arrosages et la durée totale par vanne ; puis
-  un graphique par mesure (une courbe par appareil, avec son unité et son
-  min/max). Au-delà de 2 jours, les mesures viennent de l'agrégat horaire ;
-  les vannes, elles, toujours des données brutes.
+  (filtre d'appareils optionnel), sur 24 h / 7 jours / 30 jours / 1 an.
+  Arrosages : nombre et durée totale par vanne, puis une frise (une barre
+  par ouverture) jusqu'à 7 jours, ou le temps d'arrosage par jour au-delà.
+  Mesures : un graphique par mesure (une courbe par appareil, unité,
+  min/max), à la minute jusqu'à 7 jours, à l'heure jusqu'à ~3 mois, au jour
+  au-delà (voir "Base de données"). En bas, le temps d'arrosage mois par
+  mois, année en cours vs précédente, calculé depuis le journal permanent
+  des vannes.
 - **Météo** : prévisions AROME/ARPEGE, cumul de pluie passé, et une carte
   radar interactive (widget [Windy](https://www.windy.com), gratuit, sans
   clé API — centrée sur `WEATHER_LAT`/`WEATHER_LON`).

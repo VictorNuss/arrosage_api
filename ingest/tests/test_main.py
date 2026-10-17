@@ -54,3 +54,15 @@ def test_sensor_reading_still_goes_to_readings():
     rows = _drain(main._pending_rows)
     assert len(rows) == 1 and rows[0][0] == "jardin-1"
     assert _drain(main._pending_device_info) == []
+
+
+# --- db.valve_event_rows : journal permanent des vannes -----------------------
+
+def test_valve_event_rows_keeps_only_valves_without_unit():
+    from app import db
+
+    rows = [
+        {"time": 1, "device_id": "jardin-1", "metric": "vanne_1", "value": 1.0, "unit": None},
+        {"time": 1, "device_id": "jardin-1", "metric": "temperature_c", "value": 21.5, "unit": "°C"},
+    ]
+    assert db.valve_event_rows(rows) == [{"time": 1, "device_id": "jardin-1", "metric": "vanne_1", "value": 1.0}]

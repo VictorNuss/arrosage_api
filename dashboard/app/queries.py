@@ -7,7 +7,10 @@ from . import config, live_state
 from .schema import (
     devices,
     sensor_readings,
+    sensor_readings_1min,
+    sensor_readings_daily,
     sensor_readings_hourly,
+    valve_events,
     watering_program_valves,
     watering_programs,
     watering_runs,
@@ -123,56 +126,55 @@ def get_latest_readings() -> pd.DataFrame:
     return combined.reset_index(drop=True)
 
 
+def history_source(span: timedelta):
+    """Agrégat à interroger pour afficher `span` : assez fin pour être
+    lisible, assez grossier pour garder quelques milliers de points par
+    courbe (le brut, ~5 s, n'est jamais tracé tel quel)."""
+    if span <= timedelta(days=config.HISTORY_1MIN_MAX_DAYS):
+        return sensor_readings_1min
+    if span <= timedelta(days=config.HISTORY_HOURLY_MAX_DAYS):
+        return sensor_readings_hourly
+    return sensor_readings_daily
+
+
 def get_history(devices_filter: list[str], metrics: list[str], start: datetime, end: datetime) -> pd.DataFrame:
+    """Moyenne par intervalle (minute, heure ou jour selon la durée, voir
+    history_source), colonnes time/device_id/metric/value."""
     if not devices_filter or not metrics:
         return pd.DataFrame(columns=["time", "device_id", "metric", "value"])
 
-    use_aggregate = (end - start) > timedelta(days=config.HOURLY_AGGREGATE_THRESHOLD_DAYS)
-
-    if use_aggregate:
-        h = sensor_readings_hourly
-        stmt = (
-            select(h.c.bucket.label("time"), h.c.device_id, h.c.metric, h.c.avg_value.label("value"))
-            .where(h.c.device_id.in_(devices_filter))
-            .where(h.c.metric.in_(metrics))
-            .where(h.c.bucket.between(start, end))
-            .order_by(h.c.bucket)
-        )
-    else:
-        s = sensor_readings
-        stmt = (
-            select(s.c.time, s.c.device_id, s.c.metric, s.c.value)
-            .where(s.c.device_id.in_(devices_filter))
-            .where(s.c.metric.in_(metrics))
-            .where(s.c.time.between(start, end))
-            .order_by(s.c.time)
-        )
-
+    agg = history_source(end - start)
+    stmt = (
+        select(agg.c.bucket.label("time"), agg.c.device_id, agg.c.metric, agg.c.avg_value.label("value"))
+        .where(agg.c.device_id.in_(devices_filter))
+        .where(agg.c.metric.in_(metrics))
+        .where(agg.c.bucket.between(start, end))
+        .order_by(agg.c.bucket)
+    )
     with engine.connect() as conn:
         return pd.read_sql_query(stmt, conn)
 
 
 def get_valve_history(devices_filter: list[str], start: datetime, end: datetime) -> pd.DataFrame:
-    """Changements d'état des vannes sur [start, end], toujours en données
-    brutes (une moyenne horaire de 0/1 ne veut rien dire), précédés du
-    dernier état connu avant `start` pour chaque vanne : sans lui, une vanne
-    déjà ouverte au début de la période n'apparaîtrait qu'à sa fermeture.
-    Les messages étant événementiels (un par changement), le volume reste
-    faible même sur 30 jours."""
+    """Changements d'état des vannes sur [start, end], depuis le journal
+    permanent valve_events (jamais purgé, contrairement au brut), précédés
+    du dernier état connu avant `start` pour chaque vanne : sans lui, une
+    vanne déjà ouverte au début de la période n'apparaîtrait qu'à sa
+    fermeture. Quelques lignes par arrosage : volume faible même sur
+    plusieurs années."""
     if not devices_filter:
         return pd.DataFrame(columns=["time", "device_id", "metric", "value"])
 
-    s = sensor_readings
-    is_valve = s.c.metric.ilike(f"%{VALVE_METRIC_HINT}%")
-    in_devices = s.c.device_id.in_(devices_filter)
+    v = valve_events
+    in_devices = v.c.device_id.in_(devices_filter)
     previous_state = (
-        select(s.c.time, s.c.device_id, s.c.metric, s.c.value)
-        .where(in_devices, is_valve, s.c.time < start)
-        .distinct(s.c.device_id, s.c.metric)
-        .order_by(s.c.device_id, s.c.metric, s.c.time.desc())
+        select(v.c.time, v.c.device_id, v.c.metric, v.c.value)
+        .where(in_devices, v.c.time < start)
+        .distinct(v.c.device_id, v.c.metric)
+        .order_by(v.c.device_id, v.c.metric, v.c.time.desc())
     )
-    in_period = select(s.c.time, s.c.device_id, s.c.metric, s.c.value).where(
-        in_devices, is_valve, s.c.time.between(start, end)
+    in_period = select(v.c.time, v.c.device_id, v.c.metric, v.c.value).where(
+        in_devices, v.c.time.between(start, end)
     )
     with engine.connect() as conn:
         df = pd.concat(

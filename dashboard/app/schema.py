@@ -47,6 +47,39 @@ sensor_readings = Table(
     Column("unit", String),
 )
 
+valve_events = Table(
+    "valve_events",
+    metadata,
+    Column("time", TIMESTAMP(timezone=True), nullable=False),
+    Column("device_id", String, nullable=False),
+    Column("metric", String, nullable=False),
+    Column("value", Double, nullable=False),
+)
+
+sensor_readings_1min = Table(
+    "sensor_readings_1min",
+    metadata,
+    Column("device_id", String),
+    Column("metric", String),
+    Column("bucket", TIMESTAMP(timezone=True)),
+    Column("avg_value", Double),
+    Column("min_value", Double),
+    Column("max_value", Double),
+    Column("sample_count", Double),
+)
+
+sensor_readings_daily = Table(
+    "sensor_readings_daily",
+    metadata,
+    Column("device_id", String),
+    Column("metric", String),
+    Column("bucket", TIMESTAMP(timezone=True)),
+    Column("avg_value", Double),
+    Column("min_value", Double),
+    Column("max_value", Double),
+    Column("sample_count", Double),
+)
+
 sensor_readings_hourly = Table(
     "sensor_readings_hourly",
     metadata,

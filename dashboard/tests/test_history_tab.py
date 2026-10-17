@@ -155,3 +155,78 @@ def test_metric_figure_one_line_per_device_and_legend_only_if_several():
     assert len(fig_one.data) == 1 and fig_one.layout.showlegend is False
     assert [trace.name for trace in fig_two.data] == ["jardin", "Serre"] and fig_two.layout.showlegend is True
     assert fig_one.layout.yaxis.title.text == "°C"
+
+
+# --- comparaison annuelle ---------------------------------------------------------------------
+
+def _intervals(rows):
+    """rows: (début, durée en minutes) en UTC."""
+    return pd.DataFrame(
+        [{"device_id": "jardin", "metric": "vanne_1", "start": s, "end": s + timedelta(minutes=m)} for s, m in rows]
+    )
+
+
+def test_monthly_watering_sums_per_local_month_of_the_start():
+    intervals = _intervals(
+        [
+            (datetime(2025, 7, 3, 6, 0, tzinfo=timezone.utc), 15),
+            (datetime(2025, 7, 20, 6, 0, tzinfo=timezone.utc), 30),
+            # 31/08 23:30 UTC = 01/09 01:30 à Paris : compté en septembre
+            (datetime(2025, 8, 31, 23, 30, tzinfo=timezone.utc), 10),
+        ]
+    )
+    monthly = history_tab.monthly_watering(intervals)
+    assert monthly.to_dict("records") == [
+        {"year": 2025, "month": 7, "minutes": 45.0},
+        {"year": 2025, "month": 9, "minutes": 10.0},
+    ]
+
+
+def test_monthly_watering_without_watering():
+    assert history_tab.monthly_watering(pd.DataFrame()).empty
+
+
+def test_year_start_is_local_midnight():
+    assert history_tab.year_start(2026) == datetime(2025, 12, 31, 23, 0, tzinfo=timezone.utc)
+
+
+def test_yearly_comparison_has_twelve_months_for_both_years():
+    monthly = pd.DataFrame([{"year": 2025, "month": 7, "minutes": 45.0}, {"year": 2026, "month": 7, "minutes": 90.0}])
+    chips, graph = history_tab.build_yearly_comparison(monthly, 2026)
+    previous, current = graph.figure.data
+    assert (previous.name, current.name) == ("2025", "2026")
+    assert len(current.y) == 12 and current.y[6] == 1.5 and previous.y[6] == 0.75  # en heures
+
+
+
+def test_daily_watering_per_local_day_and_valve():
+    intervals = _intervals(
+        [
+            (datetime(2026, 7, 3, 4, 30, tzinfo=timezone.utc), 15),
+            (datetime(2026, 7, 3, 17, 0, tzinfo=timezone.utc), 20),
+            (datetime(2026, 7, 4, 4, 30, tzinfo=timezone.utc), 15),
+        ]
+    )
+    daily = history_tab.daily_watering(intervals)
+    assert daily[["day", "minutes"]].to_dict("records") == [
+        {"day": datetime(2026, 7, 3).date(), "minutes": 35.0},
+        {"day": datetime(2026, 7, 4).date(), "minutes": 15.0},
+    ]
+
+
+def test_long_periods_show_daily_totals_instead_of_the_timeline():
+    keys = [("jardin", "vanne_1")]
+    intervals = _intervals([(NOW - timedelta(days=3), 15)])
+
+    def first_trace_orientation(span):
+        _chips, graph = history_tab.build_watering_section(intervals, keys, {}, NOW - span, NOW)
+        return graph.figure.data[0].orientation
+
+    assert first_trace_orientation(timedelta(days=7)) == "h"  # frise
+    assert first_trace_orientation(timedelta(days=30)) is None  # barres verticales par jour
+
+
+def test_short_series_get_markers():
+    times = [START + timedelta(hours=h) for h in range(2)]
+    df = pd.DataFrame({"time": times, "device_id": "jardin", "value": [1.0, 2.0]})
+    assert history_tab.build_metric_figure(df, "°C", {}, START, NOW).data[0].mode == "lines+markers"

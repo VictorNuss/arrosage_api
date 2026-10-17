@@ -11,9 +11,12 @@ DATABASE_URL = (
     f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 )
 
-# Au-delà de cette plage, l'historique interroge l'agrégat horaire plutôt
-# que la table brute.
-HOURLY_AGGREGATE_THRESHOLD_DAYS = 2
+# Palier de résolution de l'historique selon la durée affichée (voir
+# db/init/001_schema.sql) : 1 minute jusqu'à HISTORY_1MIN_MAX_DAYS, 1 heure
+# jusqu'à HISTORY_HOURLY_MAX_DAYS, 1 jour au-delà. Les seuils restent dans la
+# conservation de chaque palier (15 jours pour la minute, 3 ans pour l'heure).
+HISTORY_1MIN_MAX_DAYS = 8
+HISTORY_HOURLY_MAX_DAYS = 95
 
 # Le panneau vannes/vue d'ensemble interroge get_latest_readings(), qui
 # fusionne la base avec le cache mémoire alimenté par live_state.py (mis à

@@ -20,7 +20,12 @@ from . import config, queries
 from .formatting import metric_icon, metric_label
 
 # Clé -> (libellé, durée). La première est la période par défaut.
-PERIODS = {"24h": ("24 h", timedelta(hours=24)), "7d": ("7 jours", timedelta(days=7)), "30d": ("30 jours", timedelta(days=30))}
+PERIODS = {
+    "24h": ("24 h", timedelta(hours=24)),
+    "7d": ("7 jours", timedelta(days=7)),
+    "30d": ("30 jours", timedelta(days=30)),
+    "1y": ("1 an", timedelta(days=365)),
+}
 DEFAULT_PERIOD = "24h"
 
 # Mesures sans intérêt en historique : battery_v est une constante (device
@@ -33,6 +38,12 @@ _VALVE_OPEN_THRESHOLD = 0.75
 
 _DEVICE_COLORS = ["#18bc9c", "#e67e22", "#3498db", "#9b59b6", "#e74c3c", "#34495e"]
 _VALVE_COLOR = "#18bc9c"
+_VALVE_COLORS = ["#18bc9c", "#3498db", "#9b59b6", "#e67e22", "#16a085", "#2c3e50"]
+# Au-delà, un arrosage de 15 min n'a plus de largeur visible sur une frise :
+# on montre plutôt le temps d'arrosage par jour.
+_TIMELINE_MAX_SPAN = timedelta(days=8)
+_PREVIOUS_YEAR_COLOR = "#bdc3c7"
+_MONTHS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"]
 _GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
 
 
@@ -97,6 +108,41 @@ def watering_summary(intervals: pd.DataFrame) -> list[dict]:
         {"device_id": device_id, "metric": metric, "count": len(group), "duration_s": float(group["duration_s"].sum())}
         for (device_id, metric), group in grouped
     ]
+
+
+def daily_watering(intervals: pd.DataFrame) -> pd.DataFrame:
+    """Durée d'arrosage par jour local et par vanne, colonnes
+    day/device_id/metric/minutes. Un arrosage compte pour le jour où il
+    commence."""
+    if intervals.empty:
+        return pd.DataFrame(columns=["day", "device_id", "metric", "minutes"])
+    return (
+        intervals.assign(
+            day=_local(intervals["start"]).dt.date,
+            minutes=(intervals["end"] - intervals["start"]).dt.total_seconds() / 60,
+        )
+        .groupby(["day", "device_id", "metric"], as_index=False)["minutes"]
+        .sum()
+    )
+
+
+def monthly_watering(intervals: pd.DataFrame) -> pd.DataFrame:
+    """Durée totale d'arrosage (toutes vannes) par mois local, colonnes
+    year/month/minutes. Un arrosage est compté dans le mois où il commence."""
+    if intervals.empty:
+        return pd.DataFrame(columns=["year", "month", "minutes"])
+    local_start = _local(intervals["start"])
+    minutes = (intervals["end"] - intervals["start"]).dt.total_seconds() / 60
+    return (
+        pd.DataFrame({"year": local_start.dt.year, "month": local_start.dt.month, "minutes": minutes})
+        .groupby(["year", "month"], as_index=False)["minutes"]
+        .sum()
+    )
+
+
+def year_start(year: int):
+    """1er janvier `year` à minuit, heure locale, en UTC."""
+    return pd.Timestamp(year=year, month=1, day=1, tz=config.LOCAL_TZ).tz_convert("UTC").to_pydatetime()
 
 
 def format_duration(seconds: float) -> str:
@@ -171,6 +217,46 @@ def build_watering_figure(intervals: pd.DataFrame, valve_keys, device_names, sta
     return fig
 
 
+def build_daily_watering_figure(daily: pd.DataFrame, valve_keys, device_names, start, end) -> go.Figure:
+    """Barres empilées : minutes d'arrosage par jour, une couleur par vanne."""
+    several_devices = len({device_id for device_id, _ in valve_keys}) > 1
+    fig = go.Figure()
+    for index, key in enumerate(valve_keys):
+        rows = daily[(daily["device_id"] == key[0]) & (daily["metric"] == key[1])]
+        if rows.empty:
+            continue
+        name = _valve_name(*key, device_names, several_devices)
+        fig.add_trace(
+            go.Bar(
+                x=pd.to_datetime(rows["day"]),
+                y=rows["minutes"],
+                name=name,
+                marker_color=_VALVE_COLORS[index % len(_VALVE_COLORS)],
+                hovertemplate=f"{name} · %{{y:.0f}} min<extra></extra>",
+            )
+        )
+    start_day = pd.Timestamp(start).tz_convert(config.LOCAL_TZ).tz_localize(None).normalize()
+    end_day = pd.Timestamp(end).tz_convert(config.LOCAL_TZ).tz_localize(None).normalize()
+    half_day = timedelta(hours=12)
+    fig.update_xaxes(
+        type="date",
+        range=[start_day.to_pydatetime() - half_day, end_day.to_pydatetime() + half_day],
+        tickformat="%d/%m",
+    )
+    fig.update_yaxes(title_text="min / jour")
+    several_traces = len(fig.data) > 1
+    fig.update_layout(
+        height=240,
+        barmode="stack",
+        bargap=0.2,
+        showlegend=several_traces,
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0, traceorder="normal"),
+        margin=dict(l=48, r=12, t=28 if several_traces else 8, b=28),
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
+
+
 def build_watering_section(intervals, valve_keys, device_names, start, end):
     if not valve_keys:
         return dbc.Alert("Aucune vanne connue.", color="secondary", className="mb-0")
@@ -194,10 +280,54 @@ def build_watering_section(intervals, valve_keys, device_names, start, end):
                 className="history-chip",
             )
         )
-    return [
-        html.Div(chips, className="history-chips"),
-        dcc.Graph(figure=build_watering_figure(intervals, valve_keys, device_names, start, end), config=_GRAPH_CONFIG),
-    ]
+    if end - start <= _TIMELINE_MAX_SPAN:
+        figure = build_watering_figure(intervals, valve_keys, device_names, start, end)
+    else:
+        figure = build_daily_watering_figure(daily_watering(intervals), valve_keys, device_names, start, end)
+    return [html.Div(chips, className="history-chips"), dcc.Graph(figure=figure, config=_GRAPH_CONFIG)]
+
+
+def build_yearly_comparison(monthly: pd.DataFrame, current_year: int):
+    """Barres groupées par mois : année en cours vs année précédente."""
+    previous_year = current_year - 1
+    fig = go.Figure()
+    totals = []
+    for year, color in [(previous_year, _PREVIOUS_YEAR_COLOR), (current_year, _VALVE_COLOR)]:
+        by_month = monthly[monthly["year"] == year].set_index("month")["minutes"]
+        values = [float(by_month.get(month, 0.0)) for month in range(1, 13)]
+        totals.append((year, sum(values)))
+        fig.add_trace(
+            go.Bar(
+                x=_MONTHS,
+                y=[v / 60 for v in values],  # en heures : des milliers de minutes ne se lisent pas
+                name=str(year),
+                marker_color=color,
+                customdata=[format_duration(v * 60) if v else "pas d'arrosage" for v in values],
+                hovertemplate=f"{year} · %{{customdata}}<extra></extra>",
+            )
+        )
+    fig.update_yaxes(title_text="heures")
+    fig.update_xaxes(tickangle=0, tickfont=dict(size=11))
+    fig.update_layout(
+        height=260,
+        barmode="group",
+        bargap=0.25,
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0),
+        margin=dict(l=48, r=12, t=28, b=28),
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    chips = html.Div(
+        [
+            html.Div(
+                [html.Div(str(year), className="fw-semibold small"),
+                 html.Div(format_duration(minutes * 60) if minutes else "pas d'arrosage", className="small")],
+                className="history-chip",
+            )
+            for year, minutes in totals
+        ],
+        className="history-chips",
+    )
+    return [chips, dcc.Graph(figure=fig, config=_GRAPH_CONFIG)]
 
 
 def build_metric_figure(metric_df: pd.DataFrame, unit, device_names, start, end) -> go.Figure:
@@ -210,7 +340,7 @@ def build_metric_figure(metric_df: pd.DataFrame, unit, device_names, start, end)
             go.Scatter(
                 x=_local(group["time"]),
                 y=group["value"],
-                mode="lines",
+                mode="lines" if len(group) > 2 else "lines+markers",
                 line=dict(color=_DEVICE_COLORS[index % len(_DEVICE_COLORS)], width=2),
                 name=device_names.get(device_id, device_id),
                 hovertemplate=f"%{{y:.1f}} {unit or ''}<extra>%{{fullData.name}}</extra>",
@@ -297,6 +427,11 @@ def build_history_tab():
             dbc.Card(dbc.CardBody(dcc.Loading(html.Div(id="history-watering")), className="p-2"), className="mb-3"),
             html.Div([html.I(className="bi bi-graph-up me-1"), "Mesures"], className="section-title"),
             dcc.Loading(html.Div(id="history-metrics")),
+            html.Div(
+                [html.I(className="bi bi-calendar3 me-1"), "Arrosage par mois (année en cours vs précédente)"],
+                className="section-title mt-2",
+            ),
+            dbc.Card(dbc.CardBody(dcc.Loading(html.Div(id="history-yearly")), className="p-2"), className="mb-3"),
         ],
         className="pt-3",
     )
@@ -347,6 +482,7 @@ def register_callbacks(app):
         valve_keys = sorted(
             {(row.device_id, row.metric) for row in latest.itertuples()
              if row.device_id in device_ids and row.metric in valve_metrics}
+            | set(zip(valve_df["device_id"], valve_df["metric"]))
         )
         intervals = watering_intervals(valve_df, start, end)
         watering = build_watering_section(intervals, valve_keys, device_names, start, end)
@@ -360,3 +496,18 @@ def register_callbacks(app):
             if (history["metric"] == metric).any()
         ]
         return watering, dbc.Row(cards, className="g-3")
+
+    @app.callback(
+        Output("history-yearly", "children"),
+        Input("history-devices", "value"),
+        Input("tabs", "active_tab"),
+    )
+    def update_yearly_comparison(selected_devices, active_tab):
+        if active_tab != "history":
+            return no_update
+        device_ids = selected_devices or queries.get_devices()["device_id"].tolist()
+        now = datetime.now(timezone.utc)
+        current_year = pd.Timestamp(now).tz_convert(config.LOCAL_TZ).year
+        start = year_start(current_year - 1)
+        intervals = watering_intervals(queries.get_valve_history(device_ids, start, now), start, now)
+        return build_yearly_comparison(monthly_watering(intervals), current_year)

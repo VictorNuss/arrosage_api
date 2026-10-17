@@ -6,7 +6,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import OperationalError
 
 from . import config
-from .schema import devices, sensor_readings
+from .mqtt_client import is_valve_metric
+from .schema import devices, sensor_readings, valve_events
 
 log = logging.getLogger("ingest.db")
 
@@ -50,12 +51,26 @@ def update_device_info(engine, device_id, fields):
         conn.execute(devices.update().where(devices.c.device_id == device_id).values(**fields))
 
 
+def valve_event_rows(rows):
+    """Lignes de vannes à copier dans valve_events : journal permanent des
+    arrosages, qui survit à la purge du brut (voir 005_data_retention.sql)."""
+    return [
+        {key: row[key] for key in ("time", "device_id", "metric", "value")}
+        for row in rows
+        if is_valve_metric(row["metric"])
+    ]
+
+
 def insert_readings(engine, rows):
-    """rows: liste de dicts (time, device_id, metric, value, unit)."""
+    """rows: liste de dicts (time, device_id, metric, value, unit). Les
+    vannes vont aussi dans valve_events, dans la même transaction."""
     if not rows:
         return
+    valve_rows = valve_event_rows(rows)
     with engine.begin() as conn:
         conn.execute(sensor_readings.insert(), rows)
+        if valve_rows:
+            conn.execute(valve_events.insert(), valve_rows)
 
 
 def get_known_device_ids(engine):
