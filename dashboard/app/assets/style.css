@@ -171,15 +171,6 @@ body {
     margin: 0.15rem 0;
 }
 
-.weather-range .form-check {
-    padding-left: 0;
-    margin: 0;
-}
-
-.weather-range .btn {
-    white-space: nowrap;
-}
-
 .weather-radar {
     border: none;
     width: 100%;
@@ -191,4 +182,30 @@ body {
     .weather-radar {
         height: 320px;
     }
+}
+
+/* --- Sélecteurs segmentés (période Météo / Historique) ---------------------- */
+
+.segmented .form-check {
+    padding-left: 0;
+    margin: 0;
+}
+
+.segmented .btn {
+    white-space: nowrap;
+}
+
+/* --- Onglet Historique ------------------------------------------------------ */
+
+.history-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+
+.history-chip {
+    background-color: var(--bs-light);
+    border-radius: 0.5rem;
+    padding: 0.35rem 0.7rem;
 }

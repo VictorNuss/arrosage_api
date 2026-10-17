@@ -152,6 +152,35 @@ def get_history(devices_filter: list[str], metrics: list[str], start: datetime, 
         return pd.read_sql_query(stmt, conn)
 
 
+def get_valve_history(devices_filter: list[str], start: datetime, end: datetime) -> pd.DataFrame:
+    """Changements d'état des vannes sur [start, end], toujours en données
+    brutes (une moyenne horaire de 0/1 ne veut rien dire), précédés du
+    dernier état connu avant `start` pour chaque vanne : sans lui, une vanne
+    déjà ouverte au début de la période n'apparaîtrait qu'à sa fermeture.
+    Les messages étant événementiels (un par changement), le volume reste
+    faible même sur 30 jours."""
+    if not devices_filter:
+        return pd.DataFrame(columns=["time", "device_id", "metric", "value"])
+
+    s = sensor_readings
+    is_valve = s.c.metric.ilike(f"%{VALVE_METRIC_HINT}%")
+    in_devices = s.c.device_id.in_(devices_filter)
+    previous_state = (
+        select(s.c.time, s.c.device_id, s.c.metric, s.c.value)
+        .where(in_devices, is_valve, s.c.time < start)
+        .distinct(s.c.device_id, s.c.metric)
+        .order_by(s.c.device_id, s.c.metric, s.c.time.desc())
+    )
+    in_period = select(s.c.time, s.c.device_id, s.c.metric, s.c.value).where(
+        in_devices, is_valve, s.c.time.between(start, end)
+    )
+    with engine.connect() as conn:
+        df = pd.concat(
+            [pd.read_sql_query(previous_state, conn), pd.read_sql_query(in_period, conn)], ignore_index=True
+        )
+    return df.sort_values("time").reset_index(drop=True)
+
+
 def get_weather_forecast() -> pd.DataFrame:
     """weather_forecast est un instantané (pas d'historique) : toute la table
     représente la dernière prévision connue."""
