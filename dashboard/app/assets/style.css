@@ -1,0 +1,24 @@
+/* Servi automatiquement par Dash (dossier assets/ à côté de app.py). */
+
+/* --- Onglet Firmware ---------------------------------------------------- */
+
+.ota-dropzone {
+    border: 2px dashed var(--bs-border-color);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    text-align: center;
+    cursor: pointer;
+    min-height: 38px;
+    transition: border-color 0.15s, background-color 0.15s;
+}
+
+.ota-dropzone:hover {
+    border-color: var(--bs-primary);
+    background-color: rgba(var(--bs-primary-rgb), 0.04);
+}
+
+.ota-device-details {
+    background-color: var(--bs-light);
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+}

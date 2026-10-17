@@ -2,6 +2,7 @@ from dash import dcc, html
 import dash_bootstrap_components as dbc
 
 from . import config
+from .firmware_tab import build_firmware_tab
 
 
 def build_valve_panel():
@@ -99,41 +100,6 @@ def build_weather_tab():
             html.Iframe(
                 src=_windy_radar_url(),
                 style={"border": "none", "width": "100%", "height": "450px"},
-            ),
-        ],
-        className="pt-3",
-    )
-
-
-def build_firmware_tab():
-    return html.Div(
-        [
-            dcc.Store(id="ota-pending-upload"),
-            html.Div(id="ota-feedback"),
-            html.Div(id="firmware-rows"),
-            dbc.Modal(
-                [
-                    dbc.ModalHeader("Confirmer la mise à jour"),
-                    dbc.ModalBody(id="ota-modal-body"),
-                    dbc.ModalFooter(
-                        dcc.Loading(
-                            dbc.ButtonGroup(
-                                [
-                                    dbc.Button("Annuler", id="ota-cancel-btn", color="secondary"),
-                                    dbc.Button(
-                                        "Confirmer et envoyer",
-                                        id="ota-confirm-btn",
-                                        color="danger",
-                                        disabled=False,
-                                    ),
-                                ]
-                            ),
-                            type="circle",
-                        )
-                    ),
-                ],
-                id="ota-confirm-modal",
-                is_open=False,
             ),
         ],
         className="pt-3",

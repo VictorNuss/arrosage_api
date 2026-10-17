@@ -3,16 +3,17 @@ import logging
 import dash
 import dash_bootstrap_components as dbc
 
-from . import live_state, mqtt_control
+from . import firmware_tab, live_state, mqtt_control
 from .callbacks import register_callbacks
 from .layout import build_layout
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("dashboard.app")
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY], title="Supervision Arrosage")
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY, dbc.icons.BOOTSTRAP], title="Supervision Arrosage")
 app.layout = build_layout()
 register_callbacks(app)
+firmware_tab.register_callbacks(app)
 
 live_state.start()
 

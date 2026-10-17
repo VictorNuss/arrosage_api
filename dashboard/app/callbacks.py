@@ -1,4 +1,3 @@
-import base64
 from datetime import datetime, time as time_type, timedelta, timezone
 
 import pandas as pd
@@ -8,7 +7,8 @@ from dash.exceptions import PreventUpdate
 from plotly.subplots import make_subplots
 import dash_bootstrap_components as dbc
 
-from . import config, mqtt_control, ota_client, queries, valve_timers
+from . import config, mqtt_control, queries, valve_timers
+from .formatting import format_last_seen
 
 _VALVE_OPEN_COLOR = "#28a745"
 _VALVE_CLOSED_COLOR = "#dc3545"
@@ -40,19 +40,6 @@ def _valve_label(status: str, direction=None) -> str:
     if status == "closed":
         return "FERMÉE"
     return _TRANSITION_LABELS.get(direction, "EN TRANSITION…")
-
-
-def _format_last_seen(ts: pd.Timestamp) -> str:
-    if pd.isna(ts):
-        return "jamais"
-    delta = datetime.now(timezone.utc) - ts.to_pydatetime()
-    if delta < timedelta(minutes=1):
-        return "à l'instant"
-    if delta < timedelta(hours=1):
-        return f"il y a {int(delta.total_seconds() // 60)} min"
-    if delta < timedelta(days=1):
-        return f"il y a {int(delta.total_seconds() // 3600)} h"
-    return f"il y a {delta.days} j"
 
 
 _DURATION_OPTIONS = [{"label": f"{m} min" if m < 60 else "1 h", "value": m} for m in config.VALVE_DURATION_OPTIONS_MIN]
@@ -264,83 +251,13 @@ def _build_device_card(device_row, readings_for_device: pd.DataFrame):
             [
                 dbc.CardHeader(device_row.get("name") or device_row["device_id"]),
                 dbc.ListGroup(metric_items, flush=True),
-                dbc.CardFooter(f"Vu {_format_last_seen(last_seen)}", className="text-muted small"),
+                dbc.CardFooter(f"Vu {format_last_seen(last_seen)}", className="text-muted small"),
             ],
             className="h-100",
         ),
         md=4,
         className="pb-3",
     )
-
-
-def _build_firmware_row(device_row):
-    device_id = device_row["device_id"]
-    ip_address = device_row.get("ip_address") or ""
-    ip_known = bool(ip_address)
-    children = [
-        html.Div(device_row.get("name") or device_id, className="fw-bold mb-2"),
-        dbc.Row(
-            [
-                dbc.Col(
-                    dbc.InputGroup(
-                        [
-                            dbc.InputGroupText("IP"),
-                            dbc.Input(
-                                id={"type": "device-ip-input", "device": device_id},
-                                value=ip_address,
-                                placeholder="192.168.1.50",
-                            ),
-                            dbc.Button(
-                                "Enregistrer",
-                                id={"type": "device-ip-save-btn", "device": device_id},
-                                color="secondary",
-                                n_clicks=0,
-                            ),
-                            dbc.Button(
-                                "🔄",
-                                id={"type": "device-ip-refresh-btn", "device": device_id},
-                                color="secondary",
-                                outline=True,
-                                n_clicks=0,
-                                title="Demander au device de republier son IP (get_status)",
-                            ),
-                        ]
-                    ),
-                    md=4,
-                ),
-                dbc.Col(
-                    dcc.Upload(
-                        id={"type": "ota-upload", "device": device_id},
-                        children=html.Div("Glisser un .bin ou cliquer pour choisir", className="small"),
-                        accept=".bin",
-                        className="border rounded p-2 text-center",
-                    ),
-                    md=5,
-                ),
-                dbc.Col(
-                    dbc.Button(
-                        "Envoyer",
-                        id={"type": "ota-send-btn", "device": device_id},
-                        color="warning",
-                        n_clicks=0,
-                        className="w-100",
-                        disabled=not ip_known,
-                    ),
-                    md=3,
-                ),
-            ],
-            className="g-2 align-items-center",
-        ),
-    ]
-    if not ip_known:
-        children.append(
-            dbc.FormText(
-                "IP inconnue pour ce device : cliquez 🔄 pour lui demander de republier son IP "
-                "(get_status), ou saisissez-la manuellement puis Enregistrer.",
-                className="d-block mt-2",
-            )
-        )
-    return dbc.Card(dbc.CardBody(children), className="mb-3")
 
 
 _DAY_LABELS = {1: "Lun", 2: "Mar", 3: "Mer", 4: "Jeu", 5: "Ven", 6: "Sam", 7: "Dim"}
@@ -667,172 +584,6 @@ def register_callbacks(app):
             children.append(dcc.Graph(figure=fig2))
 
         return children
-
-    @app.callback(Output("firmware-rows", "children"), Input("tabs", "active_tab"))
-    def update_firmware_rows(active_tab):
-        if active_tab != "firmware":
-            return no_update
-        devices = queries.get_devices()
-        if devices.empty:
-            return dbc.Alert("Aucun appareil n'a encore envoyé de données.", color="info")
-        return [_build_firmware_row(row) for _, row in devices.iterrows()]
-
-    @app.callback(
-        Output("ota-feedback", "children", allow_duplicate=True),
-        Input({"type": "device-ip-save-btn", "device": ALL}, "n_clicks"),
-        State({"type": "device-ip-input", "device": ALL}, "value"),
-        prevent_initial_call=True,
-    )
-    def save_device_ip(_clicks, _values):
-        triggered_id = ctx.triggered_id
-        if not triggered_id or not ctx.triggered or not ctx.triggered[0]["value"]:
-            return no_update
-
-        device_id = triggered_id["device"]
-        ip_value = None
-        for state in ctx.states_list[0]:
-            if state["id"]["device"] == device_id:
-                ip_value = state["value"]
-                break
-
-        if not ota_client.is_valid_ip(ip_value or ""):
-            return dbc.Alert(
-                f"Adresse IP invalide pour {device_id}.", color="danger", dismissable=True, duration=6000
-            )
-
-        queries.set_device_ip(device_id, ip_value)
-        return dbc.Alert(
-            f"IP enregistrée pour {device_id} : {ip_value}", color="success", dismissable=True, duration=4000
-        )
-
-    @app.callback(
-        Output("ota-feedback", "children", allow_duplicate=True),
-        Input({"type": "device-ip-refresh-btn", "device": ALL}, "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def refresh_device_ip(_clicks):
-        triggered_id = ctx.triggered_id
-        if not triggered_id or not ctx.triggered or not ctx.triggered[0]["value"]:
-            return no_update
-
-        device_id = triggered_id["device"]
-        mqtt_control.send_get_status(device_id)
-        return dbc.Alert(
-            f"Demande envoyée à {device_id} : son IP réapparaîtra ici sous peu (revenez sur cet onglet).",
-            color="info",
-            dismissable=True,
-            duration=6000,
-        )
-
-    @app.callback(
-        Output("ota-confirm-modal", "is_open", allow_duplicate=True),
-        Output("ota-modal-body", "children"),
-        Output("ota-pending-upload", "data"),
-        Output("ota-feedback", "children", allow_duplicate=True),
-        Input({"type": "ota-send-btn", "device": ALL}, "n_clicks"),
-        State({"type": "ota-upload", "device": ALL}, "contents"),
-        State({"type": "ota-upload", "device": ALL}, "filename"),
-        State({"type": "device-ip-input", "device": ALL}, "value"),
-        prevent_initial_call=True,
-    )
-    def open_ota_confirm(_clicks, _contents_list, _filenames_list, _ips_list):
-        triggered_id = ctx.triggered_id
-        if not triggered_id or not ctx.triggered or not ctx.triggered[0]["value"]:
-            return no_update, no_update, no_update, no_update
-
-        device_id = triggered_id["device"]
-
-        def _find(state_index):
-            for state in ctx.states_list[state_index]:
-                if state["id"]["device"] == device_id:
-                    return state["value"]
-            return None
-
-        contents = _find(0)
-        filename = _find(1)
-        ip_address = _find(2)
-
-        if not contents or not filename:
-            return (
-                no_update,
-                no_update,
-                no_update,
-                dbc.Alert(
-                    f"Sélectionnez d'abord un fichier .bin pour {device_id}.",
-                    color="warning",
-                    dismissable=True,
-                    duration=6000,
-                ),
-            )
-        if not ota_client.is_valid_ip(ip_address or ""):
-            return (
-                no_update,
-                no_update,
-                no_update,
-                dbc.Alert(
-                    f"Adresse IP manquante ou invalide pour {device_id}. Enregistrez-la d'abord.",
-                    color="warning",
-                    dismissable=True,
-                    duration=6000,
-                ),
-            )
-
-        body = html.Div(
-            [
-                html.P(f"Envoyer {filename} vers {device_id} ({ip_address}) ?"),
-                html.P(
-                    "Le device va redémarrer et appliquer le nouveau firmware. "
-                    "Toute vanne actuellement ouverte sera fermée pendant le redémarrage.",
-                    className="text-danger mb-0",
-                ),
-            ]
-        )
-        pending = {"device_id": device_id, "ip_address": ip_address, "filename": filename, "contents": contents}
-        return True, body, pending, no_update
-
-    @app.callback(
-        Output("ota-confirm-modal", "is_open", allow_duplicate=True),
-        Input("ota-cancel-btn", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def cancel_ota(_n):
-        return False
-
-    @app.callback(
-        Output("ota-feedback", "children", allow_duplicate=True),
-        Output("ota-confirm-modal", "is_open", allow_duplicate=True),
-        Output("ota-confirm-btn", "disabled"),
-        Input("ota-confirm-btn", "n_clicks"),
-        State("ota-pending-upload", "data"),
-        prevent_initial_call=True,
-    )
-    def confirm_ota(_n, pending):
-        if not pending:
-            return no_update, False, False
-
-        device_id = pending["device_id"]
-        ip_address = pending["ip_address"]
-        filename = pending["filename"]
-        contents = pending["contents"]
-
-        try:
-            _header, b64data = contents.split(",", 1)
-            data = base64.b64decode(b64data)
-        except Exception:
-            return (
-                dbc.Alert(f"Fichier illisible pour {device_id}.", color="danger", dismissable=True, duration=6000),
-                False,
-                False,
-            )
-
-        ok, message = ota_client.send_firmware(device_id, ip_address, data)
-        alert = dbc.Alert(
-            f"{filename} → {device_id} ({ip_address}) : {message}",
-            color="success" if ok else "danger",
-            dismissable=True,
-            duration=10000,
-        )
-        return alert, False, False
 
     @app.callback(
         Output("program-modal", "is_open", allow_duplicate=True),
