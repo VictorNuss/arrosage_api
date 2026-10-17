@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 import dash_bootstrap_components as dbc
 
 from . import config, mqtt_control, queries, valve_timers
-from .formatting import format_last_seen
+from .formatting import format_last_seen, metric_icon, metric_label
 
 _VALVE_OPEN_COLOR = "#28a745"
 _VALVE_CLOSED_COLOR = "#dc3545"
@@ -69,7 +69,11 @@ def _build_valve_chip(row):
         dbc.Card(
             dbc.CardBody(
                 [
-                    html.Div(metric, className="fw-bold small"),
+                    html.Div(
+                        [html.I(className=f"bi {metric_icon(metric)} me-1 text-primary"), metric_label(metric)],
+                        className="fw-bold small",
+                        title=metric,
+                    ),
                     html.Div(device_id, className="text-muted small"),
                     # Contenu de ces deux divs géré par update_valve_badges
                     # (rafraîchi toutes les 2s) : la structure ci-dessous
@@ -118,7 +122,8 @@ def _build_valve_chip(row):
                     ),
                 ],
                 className="text-center py-2",
-            )
+            ),
+            className="valve-chip h-100",
         ),
         width="auto",
     )
@@ -144,7 +149,12 @@ def _build_tank_gauge_figure(tank):
             title={"text": "Cuve pleine ✅" if is_full else "Niveau de la cuve"},
         )
     )
-    fig.update_layout(height=220, margin=dict(l=20, r=20, t=40, b=10))
+    fig.update_layout(
+        height=220,
+        margin=dict(l=30, r=30, t=40, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
     return fig
 
 
@@ -222,36 +232,39 @@ def _build_history_figure(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def _build_metric_item(reading):
+    metric = reading["metric"]
+    if queries.is_valve_metric(metric):
+        status = _valve_status(reading["value"])
+        value = dbc.Badge(_valve_label(status, reading.get("direction")).lower(), color=_VALVE_BADGE_COLORS[status])
+    else:
+        unit = f" {reading['unit']}" if reading["unit"] else ""
+        value = html.Span(f"{reading['value']:.1f}{unit}", className="fw-semibold")
+    return dbc.ListGroupItem(
+        [
+            html.Span([html.I(className=f"bi {metric_icon(metric)} me-2 text-primary"), metric_label(metric)], title=metric),
+            value,
+        ],
+        className="d-flex justify-content-between align-items-center",
+    )
+
+
 def _build_device_card(device_row, readings_for_device: pd.DataFrame):
-    metric_items = []
-    for _, reading in readings_for_device.sort_values("metric").iterrows():
-        if queries.is_valve_metric(reading["metric"]):
-            status = _valve_status(reading["value"])
-            metric_items.append(
-                dbc.ListGroupItem(
-                    [
-                        html.Span(reading["metric"], className="me-2"),
-                        dbc.Badge(
-                            _valve_label(status, reading.get("direction")).lower(),
-                            color=_VALVE_BADGE_COLORS[status],
-                        ),
-                    ]
-                )
-            )
-        else:
-            unit = f" {reading['unit']}" if reading["unit"] else ""
-            metric_items.append(
-                dbc.ListGroupItem(f"{reading['metric']}: {reading['value']:.1f}{unit}")
-            )
+    metric_items = [_build_metric_item(reading) for _, reading in readings_for_device.sort_values("metric").iterrows()]
 
     last_seen = readings_for_device["time"].max() if not readings_for_device.empty else pd.NaT
 
     return dbc.Col(
         dbc.Card(
             [
-                dbc.CardHeader(device_row.get("name") or device_row["device_id"]),
+                dbc.CardHeader(
+                    [html.I(className="bi bi-cpu me-2"), device_row.get("name") or device_row["device_id"]],
+                    className="fw-semibold",
+                ),
                 dbc.ListGroup(metric_items, flush=True),
-                dbc.CardFooter(f"Vu {format_last_seen(last_seen)}", className="text-muted small"),
+                dbc.CardFooter(
+                    [html.I(className="bi bi-clock me-1"), f"Vu {format_last_seen(last_seen)}"], className="text-muted small"
+                ),
             ],
             className="h-100",
         ),
@@ -473,7 +486,10 @@ def register_callbacks(app):
                 f"Pas de mesure de niveau d'eau ({config.TANK_LEVEL_METRIC}) reçue pour le moment.",
                 color="secondary",
             )
-        return dcc.Graph(figure=_build_tank_gauge_figure(tank), config={"displayModeBar": False})
+        return dbc.Card(
+            dbc.CardBody(dcc.Graph(figure=_build_tank_gauge_figure(tank), config={"displayModeBar": False}), className="p-1"),
+            className="h-100",
+        )
 
     @app.callback(Output("rain-outlook", "children"), Input("global-interval", "n_intervals"))
     def update_rain_outlook(_n):

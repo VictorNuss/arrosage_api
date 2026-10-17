@@ -5,6 +5,21 @@ from . import config
 from .firmware_tab import build_firmware_tab
 
 
+def build_header():
+    return html.Header(
+        [
+            html.Div(html.I(className="bi bi-droplet-half"), className="app-logo"),
+            html.Div(
+                [
+                    html.H1("Supervision Arrosage", className="app-title"),
+                    html.Div("Vannes, capteurs, météo et programmes d'arrosage", className="app-subtitle"),
+                ]
+            ),
+        ],
+        className="app-header",
+    )
+
+
 def build_valve_panel():
     """Panneau persistant (visible quel que soit l'onglet actif) listant
     l'état de toutes les vannes en un coup d'œil."""
@@ -16,6 +31,7 @@ def build_valve_panel():
             # boutons au même rythme que l'état (2s) ferait perdre des clics
             # si l'utilisateur clique juste au moment d'un rafraîchissement.
             dcc.Interval(id="valve-structure-interval", interval=20_000),
+            html.Div([html.I(className="bi bi-droplet-half me-1"), "Vannes"], className="section-title"),
             html.Div(id="valve-command-feedback"),
             html.Div(id="valve-panel"),
         ],
@@ -225,7 +241,7 @@ def build_programs_tab():
 def build_layout():
     return dbc.Container(
         [
-            html.H2("Supervision Arrosage", className="pt-4 pb-2"),
+            build_header(),
             build_valve_panel(),
             dbc.Tabs(
                 [
@@ -237,7 +253,9 @@ def build_layout():
                 ],
                 id="tabs",
                 active_tab="overview",
+                className="app-tabs",
             ),
         ],
         fluid=True,
+        className="app-container pb-5",
     )

@@ -1,5 +1,123 @@
 /* Servi automatiquement par Dash (dossier assets/ à côté de app.py). */
 
+/* --- Général ---------------------------------------------------------------
+   Fond légèrement grisé pour détacher les cartes (blanches, sans bordure,
+   ombre douce) ; le reste du thème vient de Bootswatch FLATLY. */
+
+body {
+    background-color: #f3f6f9;
+}
+
+.app-container {
+    max-width: 1400px;
+}
+
+.card {
+    border: none;
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.card-header {
+    background-color: #fff;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    border-top-left-radius: 0.75rem !important;
+    border-top-right-radius: 0.75rem !important;
+}
+
+.card-footer {
+    background-color: #fafbfc;
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.section-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--bs-secondary-color);
+    margin-bottom: 0.5rem;
+}
+
+/* --- En-tête ------------------------------------------------------------- */
+
+.app-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.5rem 0 1.25rem;
+}
+
+.app-logo {
+    width: 3rem;
+    height: 3rem;
+    flex-shrink: 0;
+    border-radius: 0.85rem;
+    background: linear-gradient(135deg, #18bc9c, #2c7be5);
+    color: #fff;
+    font-size: 1.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(24, 188, 156, 0.35);
+}
+
+.app-title {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin: 0;
+}
+
+.app-subtitle {
+    color: var(--bs-secondary-color);
+    font-size: 0.9rem;
+}
+
+/* --- Onglets : soulignés plutôt qu'en "classeur" ------------------------- */
+
+.app-tabs {
+    border-bottom: 1px solid #dde3ea;
+    margin-top: 0.5rem;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+}
+
+.app-tabs .nav-link {
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: #5b6b7b;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.app-tabs .nav-link:hover {
+    color: var(--bs-primary);
+    border-bottom-color: rgba(var(--bs-primary-rgb), 0.35);
+}
+
+.app-tabs .nav-link.active {
+    color: var(--bs-primary);
+    background-color: transparent;
+    border-bottom-color: var(--bs-primary);
+}
+
+/* --- Panneau vannes -------------------------------------------------------- */
+
+.valve-chip {
+    min-width: 9.5rem;
+    transition: box-shadow 0.15s, transform 0.15s;
+}
+
+.valve-chip:hover {
+    box-shadow: 0 4px 14px rgba(16, 24, 40, 0.12);
+    transform: translateY(-1px);
+}
+
+.valve-chip .badge {
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+}
+
 /* --- Onglet Firmware ---------------------------------------------------- */
 
 .ota-dropzone {
