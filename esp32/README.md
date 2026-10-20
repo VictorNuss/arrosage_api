@@ -18,13 +18,21 @@ arrosage/<device_id>/etat/<key>
 `<device_id>` est un identifiant stable et unique par appareil (ex:
 `jardin-1`). Il sert de clé pour la table `devices` et apparaît tel quel
 dans le dashboard tant qu'aucun nom n'est renseigné en base. `<key>` est un
-des noms de mesure (`water_level_cm`, `humidity_pct`, `temperature_c`,
+des noms de mesure (`water_distance_cm`, `humidity_pct`, `temperature_c`,
 `battery_v`) ou de vanne (`vanne_1`, `vanne_2`, `vanne_3`, ...).
 
 QoS 1, **retain=true sur chaque sous-topic**, publié **uniquement quand une
 donnée réelle et fraîche existe** — pas de cycle périodique, pas de valeur
 bidon. Un capteur jamais lu avec succès depuis le boot du device ne publie
-simplement rien sur son topic.
+simplement rien sur son topic. Les clés capteurs dépendent du matériel
+installé (menuconfig du firmware) : aucune n'est obligatoire.
+
+`water_distance_cm` est la distance **brute** capteur ultrason → surface de
+l'eau : le device ne connaît pas la cuve. `ingest` la convertit en
+`water_level_cm` (hauteur d'eau, réglages `TANK_DISTANCE_EMPTY_CM` /
+`TANK_DISTANCE_FULL_CM`) et republie ce niveau sur
+`arrosage/<device_id>/etat/water_level_cm` — un device ne doit pas publier
+`water_level_cm` lui-même.
 
 Payload capteur :
 ```json
@@ -229,7 +237,7 @@ Avec le broker Mosquitto du projet démarré (`docker compose up -d mosquitto`),
 simuler un appareil avec `mosquitto_pub` (un topic par mesure, retain=true) :
 
 ```bash
-mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/water_level_cm -m '{"value":34.5}'
+mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/water_distance_cm -m '{"value":80.5}'
 mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/temperature_c -m '{"value":21.3}'
 mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/vanne_1 -m '{"state":"open"}'
 ```

@@ -151,6 +151,17 @@ Voir [`esp32/README.md`](esp32/README.md) pour le contrat complet et à jour
   `ip`. Affichée dans l'onglet Firmware, avant et après une mise à jour.
 - OTA (serveur → device, HTTP local, pas MQTT) : `POST http://<ip>/api/ota`
   avec le `.bin` brut — voir onglet **Firmware** du dashboard plus bas.
+- Niveau de cuve : le device publie la distance **brute** capteur ultrason →
+  surface de l'eau (`water_distance_cm`), sans rien savoir de la cuve.
+  `ingest` la stocke telle quelle et la convertit en hauteur d'eau depuis le
+  fond (`water_level_cm = TANK_DISTANCE_EMPTY_CM - distance`, bornée entre 0
+  et `TANK_DISTANCE_EMPTY_CM - TANK_DISTANCE_FULL_CM`), qu'il republie sur
+  `arrosage/<device_id>/etat/water_level_cm` (voir
+  [`ingest/app/tank.py`](ingest/app/tank.py)). Jauge du dashboard et
+  condition "niveau de cuve" des programmes utilisent ce niveau. Changer de
+  cuve ou recalibrer = modifier les deux distances dans `.env` et
+  redémarrer `ingest`, `dashboard` et `scheduler`, sans reflasher (les
+  niveaux déjà stockés ne sont pas recalculés).
 
 Test sans matériel : un device simulé complet (capteurs, vannes, OTA) se
 lance avec `docker compose --profile sim up -d --build` — voir
@@ -158,7 +169,7 @@ lance avec `docker compose --profile sim up -d --build` — voir
 simple, publier des messages à la main :
 
 ```bash
-mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/water_level_cm -m '{"value":34.5}'
+mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/water_distance_cm -m '{"value":80.5}'
 mosquitto_pub -h localhost -p 1883 -r -t arrosage/test-device/etat/vanne_1 -m '{"state":"open"}'
 ```
 
@@ -268,8 +279,8 @@ simplement "en transition", ce qui reste un état normal.
 
 Puis cinq onglets :
 
-- **Vue d'ensemble** : jauge de niveau de la cuve (seuil "pleine" configurable
-  via `TANK_HEIGHT_FULL_CM`), indicateurs de pluie prévue (3h / 2 jours), et
+- **Vue d'ensemble** : jauge de niveau de la cuve (0 % à 100 % entre
+  `TANK_DISTANCE_EMPTY_CM` et `TANK_DISTANCE_FULL_CM`), indicateurs de pluie prévue (3h / 2 jours), et
   un panneau "Humidité du sol" (une jauge par capteur de sol, ESP32 ou
   Zigbee, avec alerte de pile faible et signalement des mesures de plus de
   6 h), et une carte par appareil avec ses dernières valeurs connues.

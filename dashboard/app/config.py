@@ -24,10 +24,13 @@ HISTORY_HOURLY_MAX_DAYS = 95
 # marché puisqu'il ne s'agit plus d'attendre le batching de l'ingest.
 OVERVIEW_REFRESH_INTERVAL_MS = 2_000
 
-# Métrique utilisée comme niveau de la cuve à eau, et hauteur (cm) du capteur
-# quand la cuve est pleine.
+# Métrique utilisée comme niveau de la cuve à eau (hauteur d'eau depuis le
+# fond, calculée par ingest à partir de la distance ultrason brute, voir
+# ingest/app/tank.py), et hauteur d'eau d'une cuve pleine.
 TANK_LEVEL_METRIC = "water_level_cm"
-TANK_HEIGHT_FULL_CM = float(os.environ.get("TANK_HEIGHT_FULL_CM", "150"))
+TANK_HEIGHT_FULL_CM = float(os.environ.get("TANK_DISTANCE_EMPTY_CM") or "150") - float(
+    os.environ.get("TANK_DISTANCE_FULL_CM") or "25"
+)
 TANK_FULL_THRESHOLD_PCT = 95
 
 # Capteurs d'humidité du sol (ESP32 ou Zigbee, même clé "humidity_pct") :

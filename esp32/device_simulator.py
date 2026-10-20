@@ -101,13 +101,20 @@ class SimulatedDevice:
     """État et logique du device, indépendants du transport : `publish(key,
     payload_dict)` est injecté (MQTT en vrai, une liste dans les tests)."""
 
-    def __init__(self, publish, ip_address, fw_version, transition_delay_s=15.0, tank_height_cm=150.0):
+    def __init__(
+        self, publish, ip_address, fw_version, transition_delay_s=15.0, tank_distance_empty_cm=150.0,
+        tank_distance_full_cm=25.0,
+    ):
         self._publish = publish
         self._lock = threading.RLock()
         self.ip_address = ip_address
         self.fw_version = fw_version
         self.transition_delay_s = transition_delay_s
-        self.tank_height_cm = tank_height_cm
+        # Comme le vrai firmware, le device ne publie que la distance brute
+        # capteur -> surface (water_distance_cm) ; ces distances ne servent
+        # qu'à simuler une surface qui reste dans la cuve.
+        self.tank_distance_empty_cm = tank_distance_empty_cm
+        self.tank_distance_full_cm = tank_distance_full_cm
         self.valves = {key: "closed" for key in VALVE_MAX_DURATION_S}
         self._transition_timers = {}
         self._auto_close_timers = {}
@@ -141,13 +148,15 @@ class SimulatedDevice:
         mesure sans dérive."""
         with self._lock:
             open_valves = sum(1 for state in self.valves.values() if state == "open")
-            level = self.sensors.get("water_level_cm", self.tank_height_cm * 0.8)
-            level += random.uniform(-0.05, 0.05) - 0.08 * open_valves
+            empty, full = self.tank_distance_empty_cm, self.tank_distance_full_cm
+            # La cuve se vide : la surface s'éloigne du capteur.
+            distance = self.sensors.get("water_distance_cm", full + 0.2 * (empty - full))
+            distance += random.uniform(-0.05, 0.05) + 0.08 * open_valves
             humidity = self.sensors.get("humidity_pct", 40.0)
             humidity += random.uniform(-0.03, 0.01) + 0.05 * open_valves
             temperature = self.sensors.get("temperature_c", 18.0) + random.uniform(-0.3, 0.3)
             self.sensors = {
-                "water_level_cm": round(min(max(level, 0.0), self.tank_height_cm), 1),
+                "water_distance_cm": round(min(max(distance, full), empty), 1),
                 "humidity_pct": round(min(max(humidity, 0.0), 100.0), 1),
                 "temperature_c": round(temperature, 1),
                 "battery_v": 0.0,  # alimenté secteur : constante, comme BatteryPlaceholderSensor
@@ -308,7 +317,8 @@ class DeviceRuntime:
 
         ip_address = args.ip or detect_local_ip(args.mqtt_host, args.mqtt_port)
         self.device = SimulatedDevice(
-            self._publish, ip_address, args.fw_version, args.transition_delay, args.tank_height
+            self._publish, ip_address, args.fw_version, args.transition_delay, args.tank_distance_empty,
+            args.tank_distance_full,
         )
 
     def _publish(self, key, payload):
@@ -428,7 +438,10 @@ def parse_args(argv=None):
     parser.add_argument("--transition-delay", type=float, default=float(env("SIM_TRANSITION_DELAY_S", "15")))
     parser.add_argument("--sensor-period", type=float, default=float(env("SIM_SENSOR_PERIOD_S", "10")))
     parser.add_argument("--reboot-delay", type=float, default=float(env("SIM_REBOOT_DELAY_S", "3")))
-    parser.add_argument("--tank-height", type=float, default=float(env("SIM_TANK_HEIGHT_CM", "150")))
+    parser.add_argument(
+        "--tank-distance-empty", type=float, default=float(env("SIM_TANK_DISTANCE_EMPTY_CM") or "150")
+    )
+    parser.add_argument("--tank-distance-full", type=float, default=float(env("SIM_TANK_DISTANCE_FULL_CM") or "25"))
     return parser.parse_args(argv)
 
 

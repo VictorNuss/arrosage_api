@@ -171,15 +171,15 @@ def test_get_status_republishes_valves_known_sensors_and_device_info(device, pub
     device.read_sensors()
     published.messages.clear()
     device.handle_command(json.dumps({"action": "get_status"}))
-    assert {"water_level_cm", "humidity_pct", "temperature_c", "battery_v"} <= {k for k, _ in published.messages}
+    assert {"water_distance_cm", "humidity_pct", "temperature_c", "battery_v"} <= {k for k, _ in published.messages}
     assert ("ip", {"value": "172.18.0.50"}) in published.messages
 
 
-def test_water_level_drops_while_a_valve_is_open(device):
-    device.sensors = {"water_level_cm": 100.0, "humidity_pct": 40.0, "temperature_c": 18.0}
+def test_water_surface_moves_away_while_a_valve_is_open(device):
+    device.sensors = {"water_distance_cm": 100.0, "humidity_pct": 40.0, "temperature_c": 18.0}
     device.valves["vanne_1"] = "open"
     device.read_sensors()
-    assert device.sensors["water_level_cm"] < 100.0
+    assert device.sensors["water_distance_cm"] > 100.0
 
 
 def test_reset_after_reboot(device):

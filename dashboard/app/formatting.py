@@ -22,6 +22,7 @@ def format_last_seen(ts) -> str:
 # contrat device ; toute autre clé est affichée telle quelle.
 _METRIC_DISPLAY = {
     "water_level_cm": ("Niveau d'eau", "bi-water"),
+    "water_distance_cm": ("Distance capteur → eau", "bi-rulers"),
     "temperature_c": ("Température", "bi-thermometer-half"),
     "humidity_pct": ("Humidité du sol", "bi-moisture"),
     "battery_v": ("Alimentation", "bi-battery-half"),

@@ -6,7 +6,7 @@ import time
 
 import paho.mqtt.client as mqtt
 
-from . import config, db, zigbee
+from . import config, db, tank, zigbee
 from .mqtt_client import is_device_info_key, parse_device_info, parse_payload, parse_topic
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -86,6 +86,11 @@ def _on_message(client, userdata, message):
         return
     _pending_rows.put((device_id, rows))
 
+    if metric == config.TANK_DISTANCE_METRIC:
+        level = tank.water_level_cm(rows[0]["value"])
+        if level is not None:
+            tank.republish(client, device_id, level)
+
 
 def _flush_loop(engine):
     while True:
@@ -134,6 +139,13 @@ def _flush_loop(engine):
 
 
 def main():
+    if tank.tank_capacity_cm() is None:
+        log.error(
+            "TANK_DISTANCE_FULL_CM (%s) doit être inférieure à TANK_DISTANCE_EMPTY_CM (%s) : "
+            "niveau de cuve non calculé, seule la distance brute est stockée",
+            config.TANK_DISTANCE_FULL_CM,
+            config.TANK_DISTANCE_EMPTY_CM,
+        )
     engine = db.create_engine_with_retry()
 
     flush_thread = threading.Thread(target=_flush_loop, args=(engine,), daemon=True)

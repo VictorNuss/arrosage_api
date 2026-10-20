@@ -20,6 +20,16 @@ ZIGBEE2MQTT_BASE_TOPIC = os.environ.get("ZIGBEE2MQTT_BASE_TOPIC", "zigbee2mqtt")
 # float).
 IP_METRIC_KEY = "ip"
 
+# Niveau de la cuve (voir tank.py) : le firmware publie la distance brute
+# capteur ultrason -> surface de l'eau, ingest la convertit en hauteur d'eau
+# depuis le fond. Distances mesurées depuis le capteur : jusqu'au fond (cuve
+# vide) et jusqu'à la surface quand la cuve est pleine (au moins la zone
+# morte du capteur, ~25 cm).
+TANK_DISTANCE_METRIC = "water_distance_cm"
+TANK_LEVEL_METRIC = "water_level_cm"
+TANK_DISTANCE_EMPTY_CM = float(os.environ.get("TANK_DISTANCE_EMPTY_CM") or "150")
+TANK_DISTANCE_FULL_CM = float(os.environ.get("TANK_DISTANCE_FULL_CM") or "25")
+
 # Même cycle de publication que "ip" (connexion MQTT + get_status) : version
 # du firmware en cours d'exécution, {"value": "v1.2.0"}. Chaîne libre (tag
 # git, hash...), alimente devices.fw_version.
