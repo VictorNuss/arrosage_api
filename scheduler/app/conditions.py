@@ -110,3 +110,59 @@ def evaluate_conditions(conditions, context):
         if not ok:
             return False, reason
     return True, None
+
+
+# --- Condition par vanne : seuil d'humidité de la culture de la zone ------------
+#
+# Contrairement aux conditions ci-dessus (tout le programme arrose ou rien),
+# celle-ci est évaluée vanne par vanne : chaque vanne arrose une zone du
+# potager (garden_zones) qui a sa propre culture, donc son propre seuil.
+ZONE_CROP_MOISTURE = "zone_crop_moisture"
+
+
+def calibrated_moisture(raw, dry_ref, wet_ref):
+    """Même échelle que le dashboard (dashboard/app/garden.py) : 0 = sol sec
+    au toucher, 100 = gorgé d'eau ; valeur brute si la zone n'est pas
+    calibrée."""
+    if dry_ref is None or wet_ref is None or wet_ref <= dry_ref:
+        return float(raw)
+    return min(100.0, max(0.0, (raw - dry_ref) / (wet_ref - dry_ref) * 100))
+
+
+def filter_valves_by_zone_moisture(valves, zones_by_valve, soil_readings, now, params):
+    """Sépare les vannes à ouvrir de celles dont la zone est déjà assez
+    humide pour sa culture : humidité calibrée moyenne des capteurs de la
+    zone (mesures de moins de params["max_age_hours"]) >= seuil bas de la
+    culture (crop_profiles.moisture_min).
+
+    valves : [{"device_id", "metric", ...}] ; zones_by_valve : voir
+    db.get_zones_by_valve ; soil_readings : {device_id: {"value", "time"}}.
+
+    Renvoie (vannes à ouvrir, raisons des vannes ignorées). Une vanne sans
+    zone, sans culture ou sans mesure récente arrose : mieux vaut un
+    arrosage de trop qu'un potager qui sèche à cause d'un capteur muet.
+    """
+    max_age = timedelta(hours=params.get("max_age_hours", 6))
+    to_water, skipped = [], []
+    for valve in valves:
+        zone = zones_by_valve.get((valve["device_id"], valve["metric"]))
+        if zone is None or zone["moisture_min"] is None:
+            to_water.append(valve)
+            continue
+        values = [
+            calibrated_moisture(reading["value"], zone["dry_ref"], zone["wet_ref"])
+            for device_id in zone["sensors"]
+            if (reading := soil_readings.get(device_id)) is not None and now - reading["time"] <= max_age
+        ]
+        if not values:
+            to_water.append(valve)
+            continue
+        moisture = sum(values) / len(values)
+        if moisture >= zone["moisture_min"]:
+            skipped.append(
+                f"{zone['name']} déjà assez humide pour {zone['crop_name']} "
+                f"({moisture:.0f}% ≥ {zone['moisture_min']}%)"
+            )
+        else:
+            to_water.append(valve)
+    return to_water, skipped

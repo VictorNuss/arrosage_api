@@ -285,6 +285,18 @@ Puis cinq onglets :
   Zigbee, avec alerte de pile faible et signalement des mesures de plus de
   6 h), et une carte par appareil avec ses dernières valeurs connues.
   Rafraîchi toutes les 15s.
+- **Potager** : une carte par zone. Une zone = une vanne + ses capteurs de
+  sol + une culture (bibliothèque de profils : tomate, salade, courgette...
+  avec plage d'humidité visée, type d'arrosage, ensoleillement souhaité,
+  sensibilité au gel / mildiou). La carte montre l'humidité du sol par
+  rapport à la plage de la culture (trop sec / dans la cible / trop
+  humide), la température, l'humidité de l'air, les heures de plein soleil
+  du jour, la fertilité (conductivité) si le capteur la fournit, l'état de
+  la vanne et le dernier arrosage, et des alertes (gel, forte chaleur,
+  conditions à mildiou, pile faible, capteur muet). Calibration facultative
+  par zone : valeur brute "sol sec au toucher" et "sol gorgé d'eau ~1 h
+  après un gros arrosage" (bouton "Valeur actuelle"), l'humidité est alors
+  affichée sur cette échelle 0-100, celle des profils de culture.
 - **Historique** : tous les appareils et toutes les mesures d'emblée
   (filtre d'appareils optionnel), sur 24 h / 7 jours / 30 jours / 1 an.
   Arrosages : nombre et durée totale par vanne, puis une frise (une barre
@@ -345,6 +357,16 @@ migration) :
   récente (pile vide, hors de portée...), le programme arrose quand même**
   — l'inverse de la cuve : mieux vaut un arrosage de trop qu'un potager qui
   sèche à cause d'un capteur muet.
+- `zone_crop_moisture` (`max_age_hours`) : évaluée **vanne par vanne**, pas
+  pour tout le programme. Chaque vanne arrose une zone du potager (onglet
+  Potager) qui a sa culture : la vanne n'est pas ouverte si l'humidité
+  (calibrée) de la zone atteint le seuil bas de la culture
+  (`crop_profiles.moisture_min`, ex. Tomate 40 %, Salade 55 %). Les autres
+  vannes du programme arrosent normalement ; les zones ignorées sont notées
+  dans l'historique ("ignorées : ..."), et le programme est marqué ignoré
+  si toutes l'ont été. Même règle de prudence : une vanne sans zone, sans
+  culture ou sans mesure récente arrose. Activée par défaut sur les
+  nouveaux programmes.
 
 Pas de condition "éviter une plage horaire" : l'heure de déclenchement du
 programme suffit à choisir quand il tourne, une condition séparée pour ça

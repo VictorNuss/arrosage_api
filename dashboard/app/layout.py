@@ -3,6 +3,7 @@ import dash_bootstrap_components as dbc
 
 from . import config
 from .firmware_tab import build_firmware_tab
+from .garden_tab import build_garden_tab
 from .history_tab import build_history_tab
 from .weather_tab import build_weather_tab
 
@@ -196,6 +197,19 @@ def build_programs_tab():
                                 "(pile vide, hors de portée…), le programme arrose quand même.",
                                 className="form-text",
                             ),
+                            dbc.Switch(
+                                id="program-form-cond-zone-enabled",
+                                label="Selon la culture de chaque zone (onglet Potager)",
+                                value=True,
+                                className="mt-3",
+                            ),
+                            html.Div(
+                                "Vanne par vanne : n'arrose pas une zone dont le sol est déjà au-dessus du "
+                                "seuil bas de sa culture (ex. Tomate 40 %, Salade 55 %), les autres zones du "
+                                "programme sont arrosées normalement. Une vanne sans zone, sans culture ou "
+                                "sans mesure récente arrose toujours.",
+                                className="form-text",
+                            ),
                         ]
                     ),
                     dbc.ModalFooter(
@@ -224,6 +238,7 @@ def build_layout():
             dbc.Tabs(
                 [
                     dbc.Tab(build_overview_tab(), label="Vue d'ensemble", tab_id="overview"),
+                    dbc.Tab(build_garden_tab(), label="Potager", tab_id="garden"),
                     dbc.Tab(build_history_tab(), label="Historique", tab_id="history"),
                     dbc.Tab(build_weather_tab(), label="Météo", tab_id="weather"),
                     dbc.Tab(build_firmware_tab(), label="Firmware", tab_id="firmware"),

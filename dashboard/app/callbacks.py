@@ -245,6 +245,11 @@ def _format_days(days_of_week):
     return ", ".join(_DAY_LABELS.get(d, "?") for d in days_sorted)
 
 
+# Condition évaluée vanne par vanne par le scheduler (voir
+# scheduler/app/conditions.py::filter_valves_by_zone_moisture).
+ZONE_CROP_MOISTURE = "zone_crop_moisture"
+
+
 def _format_conditions_summary(conditions_list):
     labels = []
     for condition in conditions_list or []:
@@ -256,6 +261,8 @@ def _format_conditions_summary(conditions_list):
         elif condition_type == "max_soil_moisture":
             sensor_count = len(condition.get("device_ids") or [])
             labels.append(f"sol < {condition.get('max_pct')}% ({sensor_count} capteur{'s' if sensor_count > 1 else ''})")
+        elif condition_type == ZONE_CROP_MOISTURE:
+            labels.append("selon la culture de chaque zone")
     return labels
 
 
@@ -333,6 +340,16 @@ def _build_program_card(program):
         ),
         className="mb-2",
     )
+
+
+def _format_run_detail(run):
+    """Exécuté : vannes ouvertes (+ zones ignorées car assez humides, si
+    arrosage partiel). Ignoré : la raison."""
+    skip_reason = run["skip_reason"] or ""
+    if run["status"] != "executed":
+        return skip_reason
+    detail = _format_valves_triggered(run["valves_triggered"])
+    return f"{detail} · ignorées : {skip_reason}" if skip_reason else detail
 
 
 def _format_valves_triggered(valves_triggered):
@@ -528,6 +545,7 @@ def register_callbacks(app):
         Output("program-form-cond-soil-pct", "value"),
         Output("program-form-cond-soil-sensors", "value"),
         Output("program-form-cond-soil-sensors", "options"),
+        Output("program-form-cond-zone-enabled", "value"),
         Output("program-form-error", "children", allow_duplicate=True),
         Input("new-program-btn", "n_clicks"),
         Input({"type": "program-edit-btn", "program_id": ALL}, "n_clicks"),
@@ -570,6 +588,7 @@ def register_callbacks(app):
                 config.DEFAULT_SOIL_MAX_PCT,
                 [],
                 soil_sensor_options,
+                True,
                 no_valves_warning,
             )
 
@@ -601,6 +620,7 @@ def register_callbacks(app):
             soil.get("max_pct", config.DEFAULT_SOIL_MAX_PCT) if soil else config.DEFAULT_SOIL_MAX_PCT,
             soil.get("device_ids", []) if soil else [],
             soil_sensor_options,
+            ZONE_CROP_MOISTURE in conditions_by_type,
             no_valves_warning,
         )
 
@@ -631,6 +651,7 @@ def register_callbacks(app):
         State("program-form-cond-soil-enabled", "value"),
         State("program-form-cond-soil-pct", "value"),
         State("program-form-cond-soil-sensors", "value"),
+        State("program-form-cond-zone-enabled", "value"),
         State("programs-version", "data"),
         prevent_initial_call=True,
     )
@@ -649,6 +670,7 @@ def register_callbacks(app):
         soil_enabled,
         soil_pct,
         soil_sensors,
+        zone_enabled,
         version,
     ):
         if not n_clicks:
@@ -696,6 +718,8 @@ def register_callbacks(app):
                     "max_age_hours": config.SOIL_STALE_HOURS,
                 }
             )
+        if zone_enabled:
+            conditions_list.append({"type": ZONE_CROP_MOISTURE, "max_age_hours": config.SOIL_STALE_HOURS})
 
         valves = [tuple(v.split("::", 1)) for v in valve_values]
         hour, minute = (int(part) for part in start_time_str.split(":")[:2])
@@ -785,7 +809,7 @@ def register_callbacks(app):
             status_badge = dbc.Badge(
                 "Exécuté" if executed else "Ignoré", color="success" if executed else "secondary"
             )
-            detail = _format_valves_triggered(run["valves_triggered"]) if executed else (run["skip_reason"] or "")
+            detail = _format_run_detail(run)
             rows.append(
                 html.Tr(
                     [

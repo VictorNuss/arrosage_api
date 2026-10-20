@@ -154,3 +154,56 @@ def test_evaluate_conditions_dispatches_soil_condition():
                "soil_readings": {"sol-a": _soil(80)}}
     ok, reason = conditions.evaluate_conditions([{"type": "max_soil_moisture", **_SOIL_PARAMS}], context)
     assert ok is False and "sol déjà humide" in reason
+
+
+# --- filter_valves_by_zone_moisture : seuil de la culture de chaque zone ------
+
+def _zones():
+    return {
+        ("jardin", "vanne_1"): {"name": "Zone 1", "crop_name": "Tomate", "moisture_min": 40,
+                                "dry_ref": 20.0, "wet_ref": 60.0, "sensors": ["sol-1"]},
+        ("jardin", "vanne_2"): {"name": "Zone 2", "crop_name": "Salade", "moisture_min": 55,
+                                "dry_ref": None, "wet_ref": None, "sensors": ["sol-2", "sol-3"]},
+        ("jardin", "vanne_3"): {"name": "Zone 3", "crop_name": None, "moisture_min": None,
+                                "dry_ref": None, "wet_ref": None, "sensors": ["sol-4"]},
+    }
+
+
+def _valves(*metrics):
+    return [{"device_id": "jardin", "metric": m, "duration_s": None} for m in metrics]
+
+
+def _filter(readings, *metrics, now=None):
+    now = now or datetime(2026, 7, 15, 6, 30, tzinfo=timezone.utc)
+    to_water, skipped = conditions.filter_valves_by_zone_moisture(
+        _valves(*metrics), _zones(), readings, now, {"max_age_hours": 6}
+    )
+    return [v["metric"] for v in to_water], skipped
+
+
+def _reading(value, hours_ago=1):
+    return {"value": value, "time": datetime(2026, 7, 15, 6, 30, tzinfo=timezone.utc) - timedelta(hours=hours_ago)}
+
+
+def test_each_valve_uses_its_own_crop_threshold():
+    # Zone 1 calibrée : brut 40 -> 50 % >= 40 % (tomate) ; zone 2 : moyenne 50 % < 55 % (salade)
+    readings = {"sol-1": _reading(40), "sol-2": _reading(45), "sol-3": _reading(55)}
+    to_water, skipped = _filter(readings, "vanne_1", "vanne_2")
+    assert to_water == ["vanne_2"]
+    assert skipped == ["Zone 1 déjà assez humide pour Tomate (50% ≥ 40%)"]
+
+
+def test_dry_zone_is_watered():
+    assert _filter({"sol-1": _reading(25)}, "vanne_1") == (["vanne_1"], [])  # 12,5 % < 40 %
+
+
+def test_valve_without_zone_crop_or_fresh_reading_is_watered():
+    readings = {"sol-1": _reading(59, hours_ago=10), "sol-4": _reading(90)}
+    to_water, skipped = _filter(readings, "vanne_1", "vanne_3", "vanne_9")
+    assert to_water == ["vanne_1", "vanne_3", "vanne_9"] and skipped == []
+
+
+def test_calibrated_moisture_is_bounded():
+    assert conditions.calibrated_moisture(70, 20.0, 60.0) == 100.0
+    assert conditions.calibrated_moisture(10, 20.0, 60.0) == 0.0
+    assert conditions.calibrated_moisture(33, None, None) == 33.0

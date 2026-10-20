@@ -151,3 +151,40 @@ watering_runs = Table(
     Column("valves_triggered", JSONB),
     Column("executed_at", TIMESTAMP(timezone=True)),
 )
+
+
+crop_profiles = Table(
+    "crop_profiles",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", String, nullable=False),
+    Column("moisture_min", SmallInteger, nullable=False),
+    Column("moisture_max", SmallInteger, nullable=False),
+    Column("watering_style", String, nullable=False),
+    Column("sun_hours_min", SmallInteger, nullable=False),
+    Column("frost_sensitive", Boolean, nullable=False),
+    Column("mildew_sensitive", Boolean, nullable=False),
+    Column("notes", String),
+)
+
+garden_zones = Table(
+    "garden_zones",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", String, nullable=False),
+    Column("valve_device_id", String),
+    Column("valve_metric", String),
+    Column("crop_profile_id", Integer, ForeignKey("crop_profiles.id", ondelete="SET NULL")),
+    Column("moisture_dry_ref", Double),
+    Column("moisture_wet_ref", Double),
+    Column("notes", String),
+    Column("created_at", TIMESTAMP(timezone=True)),
+)
+
+garden_zone_sensors = Table(
+    "garden_zone_sensors",
+    metadata,
+    Column("zone_id", Integer, ForeignKey("garden_zones.id", ondelete="CASCADE"), nullable=False),
+    Column("device_id", String, nullable=False),
+    PrimaryKeyConstraint("zone_id", "device_id"),
+)
