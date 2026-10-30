@@ -46,6 +46,15 @@ LOW_BATTERY_PCT = 20
 # Un capteur Zigbee sur pile publie toutes les 30-60 min environ : au-delà
 # de ce délai sans nouvelle mesure, sa valeur est signalée comme ancienne.
 SOIL_STALE_HOURS = 6
+
+# Vue d'ensemble (voir overview.py) : seuls les appareils ayant publié
+# quelque chose dans la dernière heure ont une carte, et une mesure sans
+# nouvelle valeur depuis 24 h est considérée comme abandonnée (capteur
+# retiré, désactivé dans le firmware...) et n'est plus affichée, ni sur sa
+# carte ni dans le panneau "Humidité du sol". Les vannes restent toujours
+# affichées : elles ne publient qu'à chaque changement d'état.
+OVERVIEW_DEVICE_MAX_AGE_HOURS = 1
+OVERVIEW_METRIC_MAX_AGE_HOURS = 24
 # Valeurs par défaut de la condition de programme "sol déjà humide".
 DEFAULT_SOIL_MAX_PCT = 60
 

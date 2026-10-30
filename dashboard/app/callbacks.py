@@ -6,7 +6,7 @@ from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 
-from . import config, mqtt_control, queries, soil_panel, valve_timers
+from . import config, mqtt_control, overview, queries, soil_panel, valve_timers
 from .formatting import format_last_seen, format_metric_value, metric_icon, metric_label
 
 _VALVE_OPEN_COLOR = "#28a745"
@@ -511,7 +511,8 @@ def register_callbacks(app):
 
     @app.callback(Output("soil-panel", "children"), Input("global-interval", "n_intervals"))
     def update_soil_panel(_n):
-        rows = soil_panel.soil_sensor_rows(queries.get_devices(), queries.get_latest_readings())
+        readings = overview.drop_abandoned_metrics(queries.get_latest_readings())
+        rows = soil_panel.soil_sensor_rows(queries.get_devices(), readings)
         return soil_panel.build_soil_panel(rows)
 
     @app.callback(Output("overview-cards", "children"), Input("global-interval", "n_intervals"))
@@ -521,10 +522,19 @@ def register_callbacks(app):
             return dbc.Alert("Aucun appareil n'a encore envoyé de données.", color="info")
 
         readings = queries.get_latest_readings()
+        active = overview.active_device_ids(readings)
+        readings = overview.drop_abandoned_metrics(readings)
         cards = []
         for _, device_row in devices.iterrows():
+            if device_row["device_id"] not in active:
+                continue
             device_readings = readings[readings["device_id"] == device_row["device_id"]]
             cards.append(_build_device_card(device_row, device_readings))
+        if not cards:
+            return dbc.Alert(
+                f"Aucun appareil n'a donné de nouvelles depuis {config.OVERVIEW_DEVICE_MAX_AGE_HOURS} h.",
+                color="warning",
+            )
         return dbc.Row(cards)
 
     @app.callback(
