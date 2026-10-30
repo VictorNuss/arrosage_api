@@ -32,6 +32,9 @@ docker compose up -d --build
 Le dashboard est ensuite accessible sur http://localhost:8060 (port configurable via
 `DASHBOARD_PORT` dans `.env`).
 
+Mettre à jour un serveur déjà en service (sauvegarde, nouveaux scripts SQL,
+reconstruction) : `scripts/update.sh`, voir [`docs/mise-a-jour.md`](docs/mise-a-jour.md).
+
 ## Stack technique
 
 Les trois services Python (`ingest`, `dashboard`, `weather`) partagent la même
