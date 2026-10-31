@@ -7,8 +7,9 @@ from app import main
 
 
 class _FakeMessage:
-    def __init__(self, topic, payload):
+    def __init__(self, topic, payload, retain=False):
         self.topic = topic
+        self.retain = retain
         self.payload = json.dumps(payload).encode("utf-8")
 
 
@@ -19,6 +20,14 @@ def _drain(q):
             items.append(q.get_nowait())
     except queue.Empty:
         return items
+
+
+class _FakeClient:
+    def __init__(self):
+        self.published = []
+
+    def publish(self, topic, payload, qos=0, retain=False):
+        self.published.append(topic)
 
 
 @pytest.fixture(autouse=True)
@@ -54,6 +63,28 @@ def test_sensor_reading_still_goes_to_readings():
     rows = _drain(main._pending_rows)
     assert len(rows) == 1 and rows[0][0] == "jardin-1"
     assert _drain(main._pending_device_info) == []
+
+
+@pytest.mark.parametrize(
+    "key,payload",
+    [("humidity_pct", {"value": 100}), ("vanne_1", {"state": "closed"}), ("water_distance_cm", {"value": 40})],
+)
+def test_retained_reading_replayed_on_subscribe_is_not_stored(key, payload):
+    """Régression : la dernière valeur retenue d'un appareil éteint était
+    restockée avec l'heure du redémarrage d'ingest, le faisant passer pour
+    vivant (et une vanne fermée ajoutait un faux évènement au journal)."""
+    client = _FakeClient()
+    main._on_message(client, None, _FakeMessage(f"arrosage/arrosage-01/etat/{key}", payload, retain=True))
+    assert _drain(main._pending_rows) == []
+    assert client.published == []
+
+
+def test_retained_device_info_is_still_applied():
+    """IP et version firmware ne sont pas des mesures horodatées : la valeur
+    retenue reste la bonne information à garder en base."""
+    message = _FakeMessage("arrosage/jardin-1/etat/fw_version", {"value": "v1.2.0"}, retain=True)
+    main._on_message(None, None, message)
+    assert _drain(main._pending_device_info) == [("jardin-1", "fw_version", "v1.2.0")]
 
 
 # --- db.valve_event_rows : journal permanent des vannes -----------------------

@@ -81,12 +81,40 @@ def _query_db_latest_readings() -> pd.DataFrame:
         .distinct(sensor_readings.c.device_id, sensor_readings.c.metric)
         .order_by(sensor_readings.c.device_id, sensor_readings.c.metric, sensor_readings.c.time.desc())
     )
+    # Etat des vannes depuis le journal permanent : une vanne restée fermée
+    # plus longtemps que la conservation du brut (15 jours) garde son état,
+    # sans dépendre du message retenu que le cache live ignore.
+    v = valve_events
+    valve_stmt = (
+        select(v.c.device_id, v.c.metric, v.c.value, v.c.time)
+        .distinct(v.c.device_id, v.c.metric)
+        .order_by(v.c.device_id, v.c.metric, v.c.time.desc())
+    )
     with engine.connect() as conn:
         db_df = pd.read_sql_query(stmt, conn)
+        valve_df = pd.read_sql_query(valve_stmt, conn)
+    return merge_valve_journal(db_df, valve_df)
+
+
+def merge_valve_journal(readings_df: pd.DataFrame, valve_df: pd.DataFrame) -> pd.DataFrame:
+    """Ajoute à la dernière mesure de chaque clé du brut les vannes du
+    journal permanent ; une seule ligne par (device, métrique), la plus
+    récente (une vanne présente dans les deux a la même ligne)."""
+    if not valve_df.empty:
+        valve_df = valve_df.assign(unit=None)
+        frames = [df for df in (readings_df, valve_df) if not df.empty]
+        readings_df = pd.concat(frames, ignore_index=True)
+        readings_df["time"] = pd.to_datetime(readings_df["time"], utc=True)
+        readings_df = (
+            readings_df.sort_values("time")
+            .drop_duplicates(subset=["device_id", "metric"], keep="last")
+            .sort_values(["device_id", "metric"])
+            .reset_index(drop=True)
+        )
     # La base ne connaît pas la notion de "direction" de transition (voir
     # live_state.py) : seul le cache mémoire la fournit.
-    db_df["direction"] = None
-    return db_df
+    readings_df["direction"] = None
+    return readings_df
 
 
 def get_latest_readings() -> pd.DataFrame:

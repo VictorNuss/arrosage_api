@@ -6,8 +6,9 @@ from app import main, zigbee
 
 
 class _FakeMessage:
-    def __init__(self, topic, payload):
+    def __init__(self, topic, payload, retain=False):
         self.topic = topic
+        self.retain = retain
         self.payload = json.dumps(payload).encode("utf-8") if not isinstance(payload, bytes) else payload
 
 
@@ -109,6 +110,16 @@ def test_zigbee_message_is_republished_in_device_contract():
 def test_invalid_zigbee_payload_is_dropped():
     client = _FakeClient()
     main._on_message(client, None, _FakeMessage("zigbee2mqtt/sol-potager", b"pas du json"))
+    assert client.published == []
+
+
+def test_retained_zigbee_state_replayed_on_subscribe_is_not_republished():
+    """Régression : l'état retenu d'un ancien nom (adresse IEEE avant
+    renommage) était republié comme une mesure fraîche à chaque redémarrage
+    d'ingest, recréant un appareil fantôme "vu à l'instant"."""
+    client = _FakeClient()
+    message = _FakeMessage("zigbee2mqtt/0xa4c1388055bd2fd6", {"soil_moisture": 0}, retain=True)
+    main._on_message(client, None, message)
     assert client.published == []
 
 

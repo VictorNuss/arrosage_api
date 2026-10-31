@@ -7,8 +7,9 @@ from app import main, tank
 
 
 class _FakeMessage:
-    def __init__(self, topic, payload):
+    def __init__(self, topic, payload, retain=False):
         self.topic = topic
+        self.retain = retain
         self.payload = json.dumps(payload).encode("utf-8")
 
 

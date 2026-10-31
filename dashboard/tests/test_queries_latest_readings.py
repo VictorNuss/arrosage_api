@@ -91,3 +91,37 @@ def test_keys_only_in_live_cache_are_kept(monkeypatch):
     result = queries.get_latest_readings()
     assert len(result) == 1
     assert result.iloc[0]["metric"] == "vanne_1"
+
+
+def test_valve_state_comes_from_permanent_journal_when_raw_is_purged():
+    """L'état d'une vanne inutilisée depuis plus longtemps que la
+    conservation du brut vient de valve_events (le cache live ignore les
+    messages retenus) ; une vanne présente dans les deux n'apparaît qu'une
+    fois."""
+    now = datetime.now(timezone.utc)
+    readings = pd.DataFrame(
+        [
+            {"device_id": "jardin-1", "metric": "temperature_c", "value": 20.0, "unit": "°C", "time": now},
+            {"device_id": "jardin-1", "metric": "vanne_2", "value": 1.0, "unit": None, "time": now},
+        ]
+    )
+    valves = pd.DataFrame(
+        [
+            {"device_id": "jardin-1", "metric": "vanne_1", "value": 0.0, "time": now - timedelta(days=40)},
+            {"device_id": "jardin-1", "metric": "vanne_2", "value": 1.0, "time": now},
+        ]
+    )
+    merged = queries.merge_valve_journal(readings, valves)
+    assert list(zip(merged["metric"], merged["value"])) == [
+        ("temperature_c", 20.0), ("vanne_1", 0.0), ("vanne_2", 1.0)
+    ]
+    assert merged["direction"].isna().all()
+
+
+def test_merge_valve_journal_without_valves_keeps_readings():
+    readings = pd.DataFrame(
+        [{"device_id": "a", "metric": "temperature_c", "value": 1.0, "unit": "°C", "time": datetime.now(timezone.utc)}]
+    )
+    empty = pd.DataFrame(columns=["device_id", "metric", "value", "time"])
+    merged = queries.merge_valve_journal(readings, empty)
+    assert len(merged) == 1 and merged["direction"].isna().all()
