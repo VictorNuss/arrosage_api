@@ -165,3 +165,35 @@ def test_program_summary_and_run_detail_for_zone_condition():
         "vanne_2 (5min) · ignorées : Tomates déjà assez humide pour Tomate (60% ≥ 40%)"
     )
     assert callbacks._format_run_detail({"status": "skipped", "skip_reason": "pluie", "valves_triggered": None}) == "pluie"
+
+
+# --- formulaire de programme : zones et choix "sol déjà humide" --------------------
+
+def test_valve_options_are_named_after_zones_then_unzoned_valves():
+    from app import callbacks
+
+    zones = [
+        {"name": "Tomates", "valve_device_id": "jardin", "valve_metric": "vanne_1", "crop": {"name": "Tomate"}},
+        {"name": "Bordure", "valve_device_id": "jardin", "valve_metric": "vanne_2", "crop": None},
+        {"name": "Sans vanne", "valve_device_id": None, "valve_metric": None, "crop": None},
+    ]
+    known = [{"device_id": "jardin", "metric": "vanne_1"}, {"device_id": "serre", "metric": "vanne_1"}]
+    assert callbacks._build_valve_options(zones, known) == [
+        {"label": "Bordure", "value": "jardin::vanne_2"},
+        {"label": "Tomates (Tomate)", "value": "jardin::vanne_1"},
+        {"label": "vanne_1 (serre) — sans zone", "value": "serre::vanne_1"},
+    ]
+
+
+def test_soil_mode_round_trip_and_legacy_program():
+    from app import callbacks
+
+    crop = callbacks._soil_condition("crop", 60)
+    fixed = callbacks._soil_condition("fixed", 45)
+    assert callbacks._soil_condition("off", 60) is None
+    assert callbacks._soil_mode_from_conditions({crop["type"]: crop})[0] == "crop"
+    assert callbacks._soil_mode_from_conditions({fixed["type"]: fixed}) == ("fixed", 45)
+    legacy = {"type": "max_soil_moisture", "max_pct": 50, "device_ids": ["sol-1"]}
+    assert callbacks._soil_mode_from_conditions({"max_soil_moisture": legacy}) == ("fixed", 50)
+    assert callbacks._soil_mode_from_conditions({})[0] == "off"
+    assert callbacks._format_conditions_summary([fixed]) == ["sol de chaque zone < 45%"]

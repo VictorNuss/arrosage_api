@@ -109,13 +109,13 @@ def build_programs_tab():
                                 ],
                                 className="mt-3 g-3",
                             ),
-                            dbc.Label("Vannes", className="mt-3"),
-                            dcc.Dropdown(id="program-form-valves", multi=True),
+                            dbc.Label("Zones à arroser", className="mt-3"),
+                            dcc.Dropdown(id="program-form-valves", multi=True, placeholder="Zones du Potager"),
                             html.Hr(),
-                            html.Div("Conditions", className="fw-bold mb-2"),
+                            html.Div("Ne pas arroser si…", className="fw-bold mb-2"),
                             dbc.Switch(
                                 id="program-form-cond-rain-enabled",
-                                label="Ne pas arroser s'il pleut prochainement",
+                                label="il pleut dans les prochaines heures",
                                 value=True,
                             ),
                             dbc.Row(
@@ -136,7 +136,7 @@ def build_programs_tab():
                             ),
                             dbc.Switch(
                                 id="program-form-cond-tank-enabled",
-                                label="Ne pas arroser si la cuve est sous",
+                                label="la cuve est trop basse",
                                 value=True,
                             ),
                             dbc.Row(
@@ -156,58 +156,39 @@ def build_programs_tab():
                                 ),
                                 className="mb-2",
                             ),
-                            dbc.Switch(
-                                id="program-form-cond-soil-enabled",
-                                label="Ne pas arroser si le sol est déjà humide",
-                                value=False,
+                            html.Div("Sol déjà humide ?", className="mt-3"),
+                            dbc.RadioItems(
+                                id="program-form-soil-mode",
+                                options=[
+                                    {"label": "Selon la culture de chaque zone", "value": "crop"},
+                                    {"label": "Seuil fixe pour toutes les zones", "value": "fixed"},
+                                    {"label": "Arroser quand même", "value": "off"},
+                                ],
+                                value="crop",
                             ),
                             dbc.Row(
-                                [
-                                    dbc.Col(
-                                        [
-                                            dbc.Label("Humidité moyenne max (%)", size="sm"),
-                                            dbc.Input(
-                                                id="program-form-cond-soil-pct",
-                                                type="number",
-                                                min=0,
-                                                max=100,
-                                                value=config.DEFAULT_SOIL_MAX_PCT,
-                                                size="sm",
-                                            ),
-                                        ],
-                                        md=4,
-                                    ),
-                                    dbc.Col(
-                                        [
-                                            dbc.Label("Capteurs de sol", size="sm"),
-                                            dcc.Dropdown(
-                                                id="program-form-cond-soil-sensors",
-                                                multi=True,
-                                                placeholder="Capteurs de la zone arrosée",
-                                            ),
-                                        ],
-                                        md=8,
-                                    ),
-                                ],
-                                className="g-2",
+                                dbc.Col(
+                                    [
+                                        dbc.Label("Seuil (%)", size="sm"),
+                                        dbc.Input(
+                                            id="program-form-soil-pct",
+                                            type="number",
+                                            min=0,
+                                            max=100,
+                                            value=config.DEFAULT_SOIL_MAX_PCT,
+                                            size="sm",
+                                        ),
+                                    ],
+                                    md=4,
+                                ),
+                                id="program-form-soil-pct-row",
+                                className="mb-2",
                             ),
                             html.Div(
-                                "Moyenne des dernières mesures de moins de "
-                                f"{config.SOIL_STALE_HOURS} h des capteurs choisis. Sans mesure récente "
-                                "(pile vide, hors de portée…), le programme arrose quand même.",
-                                className="form-text",
-                            ),
-                            dbc.Switch(
-                                id="program-form-cond-zone-enabled",
-                                label="Selon la culture de chaque zone (onglet Potager)",
-                                value=True,
-                                className="mt-3",
-                            ),
-                            html.Div(
-                                "Vanne par vanne : n'arrose pas une zone dont le sol est déjà au-dessus du "
-                                "seuil bas de sa culture (ex. Tomate 40 %, Salade 55 %), les autres zones du "
-                                "programme sont arrosées normalement. Une vanne sans zone, sans culture ou "
-                                "sans mesure récente arrose toujours.",
+                                "Zone par zone : une zone dont le sol est déjà assez humide n'est pas arrosée, "
+                                "les autres le sont normalement. Le seuil est celui de la culture (onglet "
+                                "Potager, ex. Tomate 40 %, Salade 55 %) ou le seuil fixe. Une zone sans capteur, "
+                                "sans culture ou sans mesure récente est toujours arrosée.",
                                 className="form-text",
                             ),
                         ]

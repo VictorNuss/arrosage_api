@@ -43,8 +43,8 @@ def _is_due(program, now):
 
 
 def _zone_condition(program):
-    """Condition "seuil d'humidité selon la culture de la zone" du programme,
-    ou None (voir conditions.filter_valves_by_zone_moisture)."""
+    """Condition "sol déjà humide" évaluée zone par zone (seuil de la culture
+    ou seuil fixe), ou None (voir conditions.filter_valves_by_zone_moisture)."""
     return next(
         (c for c in program["conditions"] or [] if c.get("type") == conditions.ZONE_CROP_MOISTURE), None
     )

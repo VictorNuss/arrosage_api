@@ -173,10 +173,10 @@ def _valves(*metrics):
     return [{"device_id": "jardin", "metric": m, "duration_s": None} for m in metrics]
 
 
-def _filter(readings, *metrics, now=None):
+def _filter(readings, *metrics, now=None, **params):
     now = now or datetime(2026, 7, 15, 6, 30, tzinfo=timezone.utc)
     to_water, skipped = conditions.filter_valves_by_zone_moisture(
-        _valves(*metrics), _zones(), readings, now, {"max_age_hours": 6}
+        _valves(*metrics), _zones(), readings, now, {"max_age_hours": 6, **params}
     )
     return [v["metric"] for v in to_water], skipped
 
@@ -201,6 +201,14 @@ def test_valve_without_zone_crop_or_fresh_reading_is_watered():
     readings = {"sol-1": _reading(59, hours_ago=10), "sol-4": _reading(90)}
     to_water, skipped = _filter(readings, "vanne_1", "vanne_3", "vanne_9")
     assert to_water == ["vanne_1", "vanne_3", "vanne_9"] and skipped == []
+
+
+def test_fixed_threshold_applies_to_every_zone_even_without_crop():
+    # Zone 1 : 50 % >= 45 % ; zone 2 : 50 % >= 45 % ; zone 3 (sans culture) : 30 % < 45 %
+    readings = {"sol-1": _reading(40), "sol-2": _reading(50), "sol-4": _reading(30)}
+    to_water, skipped = _filter(readings, "vanne_1", "vanne_2", "vanne_3", "vanne_9", min_pct=45)
+    assert to_water == ["vanne_3", "vanne_9"]
+    assert skipped == ["Zone 1 déjà assez humide (50% ≥ 45%)", "Zone 2 déjà assez humide (50% ≥ 45%)"]
 
 
 def test_calibrated_moisture_is_bounded():

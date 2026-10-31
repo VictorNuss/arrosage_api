@@ -393,7 +393,7 @@ def get_recent_runs(limit: int = 20) -> pd.DataFrame:
 
 # --- Potager : zones et profils de culture -------------------------------------
 
-def _alpha_key(text: str) -> str:
+def alpha_key(text: str) -> str:
     """Tri alphabétique français : "Épinard" avec les E, pas après le Z
     (la base trie octet par octet)."""
     return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
@@ -402,7 +402,7 @@ def _alpha_key(text: str) -> str:
 def get_crop_profiles() -> list[dict]:
     with engine.connect() as conn:
         rows = conn.execute(select(crop_profiles)).mappings().all()
-    return sorted((dict(row) for row in rows), key=lambda profile: _alpha_key(profile["name"]))
+    return sorted((dict(row) for row in rows), key=lambda profile: alpha_key(profile["name"]))
 
 
 def get_zones() -> list[dict]:

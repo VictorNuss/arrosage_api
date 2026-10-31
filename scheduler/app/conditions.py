@@ -131,9 +131,10 @@ def calibrated_moisture(raw, dry_ref, wet_ref):
 
 def filter_valves_by_zone_moisture(valves, zones_by_valve, soil_readings, now, params):
     """Sépare les vannes à ouvrir de celles dont la zone est déjà assez
-    humide pour sa culture : humidité calibrée moyenne des capteurs de la
-    zone (mesures de moins de params["max_age_hours"]) >= seuil bas de la
-    culture (crop_profiles.moisture_min).
+    humide : humidité calibrée moyenne des capteurs de la zone (mesures de
+    moins de params["max_age_hours"]) >= seuil. Le seuil est params["min_pct"]
+    s'il est donné (seuil fixe, le même pour toutes les zones), sinon le
+    seuil bas de la culture de la zone (crop_profiles.moisture_min).
 
     valves : [{"device_id", "metric", ...}] ; zones_by_valve : voir
     db.get_zones_by_valve ; soil_readings : {device_id: {"value", "time"}}.
@@ -143,10 +144,12 @@ def filter_valves_by_zone_moisture(valves, zones_by_valve, soil_readings, now, p
     arrosage de trop qu'un potager qui sèche à cause d'un capteur muet.
     """
     max_age = timedelta(hours=params.get("max_age_hours", 6))
+    fixed_pct = params.get("min_pct")
     to_water, skipped = [], []
     for valve in valves:
         zone = zones_by_valve.get((valve["device_id"], valve["metric"]))
-        if zone is None or zone["moisture_min"] is None:
+        threshold = None if zone is None else (fixed_pct if fixed_pct is not None else zone["moisture_min"])
+        if threshold is None:
             to_water.append(valve)
             continue
         values = [
@@ -158,11 +161,9 @@ def filter_valves_by_zone_moisture(valves, zones_by_valve, soil_readings, now, p
             to_water.append(valve)
             continue
         moisture = sum(values) / len(values)
-        if moisture >= zone["moisture_min"]:
-            skipped.append(
-                f"{zone['name']} déjà assez humide pour {zone['crop_name']} "
-                f"({moisture:.0f}% ≥ {zone['moisture_min']}%)"
-            )
+        if moisture >= threshold:
+            reason = f"pour {zone['crop_name']} " if fixed_pct is None else ""
+            skipped.append(f"{zone['name']} déjà assez humide {reason}({moisture:.0f}% ≥ {threshold}%)")
         else:
             to_water.append(valve)
     return to_water, skipped

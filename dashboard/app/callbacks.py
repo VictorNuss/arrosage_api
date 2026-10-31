@@ -262,29 +262,75 @@ def _format_conditions_summary(conditions_list):
             sensor_count = len(condition.get("device_ids") or [])
             labels.append(f"sol < {condition.get('max_pct')}% ({sensor_count} capteur{'s' if sensor_count > 1 else ''})")
         elif condition_type == ZONE_CROP_MOISTURE:
-            labels.append("selon la culture de chaque zone")
+            if condition.get("min_pct") is not None:
+                labels.append(f"sol de chaque zone < {condition['min_pct']}%")
+            else:
+                labels.append("selon la culture de chaque zone")
     return labels
-
-
-def _build_soil_sensor_options():
-    return [{"label": s["name"], "value": s["device_id"]} for s in queries.get_soil_sensors()]
 
 
 def _valve_option_value(device_id, metric):
     return f"{device_id}::{metric}"
 
 
-def _build_valve_options():
-    return [
-        {"label": f"{v['metric']} ({v['device_id']})", "value": _valve_option_value(v["device_id"], v["metric"])}
-        for v in queries.get_known_valves()
-    ]
+def _build_valve_options(zones, known_valves):
+    """Une option par zone du Potager ayant une vanne ("Carré nord (Tomate)"),
+    puis les vannes connues qui n'arrosent aucune zone. La valeur reste la
+    vanne : un programme pilote des vannes, la zone n'en est que le nom."""
+    options, zoned = [], set()
+    for zone in sorted(zones, key=lambda z: queries.alpha_key(z["name"])):
+        if not zone["valve_device_id"]:
+            continue
+        valve = (zone["valve_device_id"], zone["valve_metric"])
+        zoned.add(valve)
+        crop = f" ({zone['crop']['name']})" if zone["crop"] else ""
+        options.append({"label": f"{zone['name']}{crop}", "value": _valve_option_value(*valve)})
+    for v in known_valves:
+        if (v["device_id"], v["metric"]) not in zoned:
+            options.append(
+                {
+                    "label": f"{v['metric']} ({v['device_id']}) — sans zone",
+                    "value": _valve_option_value(v["device_id"], v["metric"]),
+                }
+            )
+    return options
 
 
-def _build_program_card(program):
+def _soil_mode_from_conditions(conditions_by_type):
+    """(mode, seuil) du formulaire pour un programme existant. Un ancien
+    programme "max_soil_moisture" (moyenne de capteurs choisis) est repris en
+    seuil fixe : à l'enregistrement il passe en évaluation zone par zone."""
+    zone = conditions_by_type.get(ZONE_CROP_MOISTURE)
+    if zone is not None:
+        if zone.get("min_pct") is not None:
+            return "fixed", zone["min_pct"]
+        return "crop", config.DEFAULT_SOIL_MAX_PCT
+    legacy = conditions_by_type.get("max_soil_moisture")
+    if legacy is not None:
+        return "fixed", legacy.get("max_pct", config.DEFAULT_SOIL_MAX_PCT)
+    return "off", config.DEFAULT_SOIL_MAX_PCT
+
+
+def _soil_condition(mode, pct):
+    """Condition "sol déjà humide" du formulaire, évaluée zone par zone par le
+    scheduler : seuil de la culture ("crop") ou seuil fixe ("fixed")."""
+    if mode == "crop":
+        return {"type": ZONE_CROP_MOISTURE, "max_age_hours": config.SOIL_STALE_HOURS}
+    if mode == "fixed":
+        return {"type": ZONE_CROP_MOISTURE, "min_pct": int(pct), "max_age_hours": config.SOIL_STALE_HOURS}
+    return None
+
+
+def _build_program_card(program, zone_labels):
+    """zone_labels : {valeur d'option de vanne: nom de la zone}, voir
+    _build_valve_options."""
     program_id = program["id"]
     valve_labels = (
-        ", ".join(f"{v['metric']} ({v['device_id']})" for v in program["valves"]) or "aucune vanne sélectionnée"
+        ", ".join(
+            zone_labels.get(_valve_option_value(v["device_id"], v["metric"]), f"{v['metric']} ({v['device_id']})")
+            for v in program["valves"]
+        )
+        or "aucune zone sélectionnée"
     )
     condition_badges = [
         dbc.Badge(label, color="info", className="me-1")
@@ -551,11 +597,8 @@ def register_callbacks(app):
         Output("program-form-cond-rain-hours", "value"),
         Output("program-form-cond-tank-enabled", "value"),
         Output("program-form-cond-tank-pct", "value"),
-        Output("program-form-cond-soil-enabled", "value"),
-        Output("program-form-cond-soil-pct", "value"),
-        Output("program-form-cond-soil-sensors", "value"),
-        Output("program-form-cond-soil-sensors", "options"),
-        Output("program-form-cond-zone-enabled", "value"),
+        Output("program-form-soil-mode", "value"),
+        Output("program-form-soil-pct", "value"),
         Output("program-form-error", "children", allow_duplicate=True),
         Input("new-program-btn", "n_clicks"),
         Input({"type": "program-edit-btn", "program_id": ALL}, "n_clicks"),
@@ -565,12 +608,11 @@ def register_callbacks(app):
         if not ctx.triggered or not ctx.triggered[0]["value"]:
             raise PreventUpdate
 
-        valve_options = _build_valve_options()
-        soil_sensor_options = _build_soil_sensor_options()
+        valve_options = _build_valve_options(queries.get_zones(), queries.get_known_valves())
         no_valves_warning = (
             dbc.Alert(
-                "Aucune vanne détectée pour l'instant : elle doit avoir déjà envoyé son état "
-                "au moins une fois (sur arrosage/<device>/etat/<vanne>) pour apparaître ici.",
+                "Aucune zone ni vanne pour l'instant : créez une zone dans l'onglet Potager, ou "
+                "attendez qu'une vanne ait envoyé son état (arrosage/<device>/etat/<vanne>).",
                 color="warning",
                 className="mb-3",
             )
@@ -594,11 +636,8 @@ def register_callbacks(app):
                 3,
                 True,
                 10,
-                False,
+                "crop",
                 config.DEFAULT_SOIL_MAX_PCT,
-                [],
-                soil_sensor_options,
-                True,
                 no_valves_warning,
             )
 
@@ -609,7 +648,7 @@ def register_callbacks(app):
         conditions_by_type = {c["type"]: c for c in (program["conditions"] or [])}
         rain = conditions_by_type.get("no_rain_forecast")
         tank = conditions_by_type.get("min_tank_pct")
-        soil = conditions_by_type.get("max_soil_moisture")
+        soil_mode, soil_pct = _soil_mode_from_conditions(conditions_by_type)
         valve_values = [_valve_option_value(v["device_id"], v["metric"]) for v in program["valves"]]
 
         return (
@@ -626,13 +665,17 @@ def register_callbacks(app):
             rain.get("window_hours", 3) if rain else 3,
             tank is not None,
             tank.get("min_pct", 10) if tank else 10,
-            soil is not None,
-            soil.get("max_pct", config.DEFAULT_SOIL_MAX_PCT) if soil else config.DEFAULT_SOIL_MAX_PCT,
-            soil.get("device_ids", []) if soil else [],
-            soil_sensor_options,
-            ZONE_CROP_MOISTURE in conditions_by_type,
+            soil_mode,
+            soil_pct,
             no_valves_warning,
         )
+
+    @app.callback(
+        Output("program-form-soil-pct-row", "style"),
+        Input("program-form-soil-mode", "value"),
+    )
+    def toggle_soil_pct(mode):
+        return None if mode == "fixed" else {"display": "none"}
 
     @app.callback(
         Output("program-modal", "is_open", allow_duplicate=True),
@@ -658,10 +701,8 @@ def register_callbacks(app):
         State("program-form-cond-rain-hours", "value"),
         State("program-form-cond-tank-enabled", "value"),
         State("program-form-cond-tank-pct", "value"),
-        State("program-form-cond-soil-enabled", "value"),
-        State("program-form-cond-soil-pct", "value"),
-        State("program-form-cond-soil-sensors", "value"),
-        State("program-form-cond-zone-enabled", "value"),
+        State("program-form-soil-mode", "value"),
+        State("program-form-soil-pct", "value"),
         State("programs-version", "data"),
         prevent_initial_call=True,
     )
@@ -677,10 +718,8 @@ def register_callbacks(app):
         rain_hours,
         tank_enabled,
         tank_pct,
-        soil_enabled,
+        soil_mode,
         soil_pct,
-        soil_sensors,
-        zone_enabled,
         version,
     ):
         if not n_clicks:
@@ -692,13 +731,13 @@ def register_callbacks(app):
         if not days:
             errors.append("sélectionnez au moins un jour")
         if not valve_values:
-            errors.append("sélectionnez au moins une vanne")
+            errors.append("sélectionnez au moins une zone")
         if not start_time_str:
             errors.append("l'heure de déclenchement est obligatoire")
         if not duration_min or duration_min <= 0:
             errors.append("la durée doit être positive")
-        if soil_enabled and not soil_sensors:
-            errors.append("choisissez au moins un capteur de sol (ou désactivez la condition)")
+        if soil_mode == "fixed" and (soil_pct is None or not 0 <= soil_pct <= 100):
+            errors.append("le seuil d'humidité doit être entre 0 et 100 %")
 
         if errors:
             # A l'intérieur de la modale (pas dans programs-feedback, qui est
@@ -719,17 +758,9 @@ def register_callbacks(app):
             )
         if tank_enabled:
             conditions_list.append({"type": "min_tank_pct", "min_pct": int(tank_pct or 0)})
-        if soil_enabled:
-            conditions_list.append(
-                {
-                    "type": "max_soil_moisture",
-                    "max_pct": int(soil_pct if soil_pct is not None else config.DEFAULT_SOIL_MAX_PCT),
-                    "device_ids": list(soil_sensors),
-                    "max_age_hours": config.SOIL_STALE_HOURS,
-                }
-            )
-        if zone_enabled:
-            conditions_list.append({"type": ZONE_CROP_MOISTURE, "max_age_hours": config.SOIL_STALE_HOURS})
+        soil_condition = _soil_condition(soil_mode, soil_pct)
+        if soil_condition is not None:
+            conditions_list.append(soil_condition)
 
         valves = [tuple(v.split("::", 1)) for v in valve_values]
         hour, minute = (int(part) for part in start_time_str.split(":")[:2])
@@ -798,7 +829,8 @@ def register_callbacks(app):
         programs = queries.get_programs()
         if not programs:
             return dbc.Alert("Aucun programme pour l'instant.", color="secondary")
-        return [_build_program_card(program) for program in programs]
+        zone_labels = {o["value"]: o["label"] for o in _build_valve_options(queries.get_zones(), [])}
+        return [_build_program_card(program, zone_labels) for program in programs]
 
     @app.callback(
         Output("watering-runs-history", "children"),

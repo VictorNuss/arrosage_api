@@ -353,23 +353,27 @@ migration) :
 - `min_tank_pct` (`min_pct`) : n'arrose pas si le niveau de la cuve est sous
   ce seuil. **Si aucune lecture de niveau n'est encore connue, le programme
   est bloqué par sécurité** plutôt que de supposer la cuve pleine.
-- `max_soil_moisture` (`device_ids`, `max_pct`, `max_age_hours`) : n'arrose
-  pas si la **moyenne** des dernières humidités du sol (`humidity_pct`) des
-  capteurs choisis atteint `max_pct`. Seules les mesures de moins de
-  `max_age_hours` (6 h depuis le dashboard) comptent ; **sans aucune mesure
-  récente (pile vide, hors de portée...), le programme arrose quand même**
-  — l'inverse de la cuve : mieux vaut un arrosage de trop qu'un potager qui
-  sèche à cause d'un capteur muet.
-- `zone_crop_moisture` (`max_age_hours`) : évaluée **vanne par vanne**, pas
+- `zone_crop_moisture` (`max_age_hours`, `min_pct` optionnel) : la
+  condition "sol déjà humide" du formulaire, évaluée **zone par zone**, pas
   pour tout le programme. Chaque vanne arrose une zone du potager (onglet
-  Potager) qui a sa culture : la vanne n'est pas ouverte si l'humidité
-  (calibrée) de la zone atteint le seuil bas de la culture
+  Potager) : la vanne n'est pas ouverte si l'humidité (calibrée, moyenne
+  des capteurs de la zone, mesures de moins de `max_age_hours`) atteint le
+  seuil. Ce seuil est `min_pct` s'il est donné ("seuil fixe pour toutes les
+  zones"), sinon le seuil bas de la culture de la zone
   (`crop_profiles.moisture_min`, ex. Tomate 40 %, Salade 55 %). Les autres
   vannes du programme arrosent normalement ; les zones ignorées sont notées
   dans l'historique ("ignorées : ..."), et le programme est marqué ignoré
-  si toutes l'ont été. Même règle de prudence : une vanne sans zone, sans
-  culture ou sans mesure récente arrose. Activée par défaut sur les
-  nouveaux programmes.
+  si toutes l'ont été. **Une vanne sans zone, sans capteur, sans culture
+  (en mode culture) ou sans mesure récente arrose quand même** — l'inverse
+  de la cuve : mieux vaut un arrosage de trop qu'un potager qui sèche à
+  cause d'un capteur muet. Mode culture par défaut sur les nouveaux
+  programmes.
+- `max_soil_moisture` (`device_ids`, `max_pct`, `max_age_hours`) : ancienne
+  forme (moyenne de capteurs choisis à la main, pour tout le programme).
+  Toujours évaluée par le scheduler pour les programmes existants, mais le
+  formulaire ne la propose plus : un programme qui l'utilise est repris en
+  "seuil fixe" et converti en `zone_crop_moisture` à son prochain
+  enregistrement.
 
 Pas de condition "éviter une plage horaire" : l'heure de déclenchement du
 programme suffit à choisir quand il tourne, une condition séparée pour ça
@@ -395,9 +399,6 @@ même minute ou redémarre au mauvais moment.
 - Toutes les vannes d'un même programme partagent sa durée par défaut ; une
   durée par vanne est prévue dans le schéma (`watering_program_valves.duration_s`)
   mais pas encore exposée dans le formulaire du dashboard.
-- La condition d'humidité du sol porte sur tout le programme (moyenne des
-  capteurs choisis), pas sur chaque vanne : pour des zones au sol différent,
-  faire un programme par zone.
 - Les capteurs Zigbee apparaissent aussi dans l'onglet Firmware (sans IP,
   donc sans OTA possible), et reçoivent comme les ESP32 le `get_status` de
   resynchronisation d'`ingest`, sans effet (personne n'écoute ce topic).
