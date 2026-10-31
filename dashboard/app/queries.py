@@ -125,8 +125,13 @@ def get_latest_readings() -> pd.DataFrame:
             return True
         return row["time"] > live_time + _LIVE_CACHE_STALE_BUFFER
 
-    db_only = db_df[db_df.apply(_db_row_needed, axis=1)] if not db_df.empty else db_df
-    combined = pd.concat([db_only, live_df], ignore_index=True)
+    db_only = db_df[db_df.apply(_db_row_needed, axis=1)]
+    # Une clé où la base l'emporte ne doit plus apparaître côté cache : sinon
+    # deux lignes pour la même (device, metric), soit une vanne affichée deux
+    # fois dans le panneau.
+    db_keys = set(zip(db_only["device_id"], db_only["metric"]))
+    live_only = live_df[[key not in db_keys for key in zip(live_df["device_id"], live_df["metric"])]]
+    combined = pd.concat([db_only, live_only], ignore_index=True)
     return combined.reset_index(drop=True)
 
 

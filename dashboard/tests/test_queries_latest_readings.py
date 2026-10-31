@@ -59,9 +59,35 @@ def test_db_wins_when_meaningfully_fresher_than_live_cache(monkeypatch):
     )
 
     result = queries.get_latest_readings()
-    row = result[(result["device_id"] == "jardin-1") & (result["metric"] == "vanne_1")].iloc[0]
+    rows = result[(result["device_id"] == "jardin-1") & (result["metric"] == "vanne_1")]
+    # Régression : la ligne périmée du cache restait aussi, et la vanne
+    # apparaissait deux fois dans le panneau des vannes.
+    assert len(rows) == 1
+    row = rows.iloc[0]
     assert row["value"] == 1.0
     assert row["direction"] is None
+
+
+def test_one_row_per_key_when_db_wins_on_some_valves_only(monkeypatch):
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(
+        queries, "_query_db_latest_readings",
+        lambda: _db_df([
+            ("jardin-1", "vanne_1", 0.0, now + timedelta(seconds=30)),
+            ("jardin-1", "vanne_2", 0.0, now),
+            ("jardin-1", "temperature_c", 21.0, now),
+        ]),
+    )
+    monkeypatch.setattr(
+        queries.live_state, "get_latest_readings",
+        lambda: _live_rows([
+            ("jardin-1", "vanne_1", 1.0, now, None),
+            ("jardin-1", "vanne_2", 1.0, now, None),
+        ]),
+    )
+
+    valves = queries.get_valve_states()
+    assert valves[["metric", "value"]].values.tolist() == [["vanne_1", 0.0], ["vanne_2", 1.0]]
 
 
 def test_keys_only_in_db_are_kept(monkeypatch):
