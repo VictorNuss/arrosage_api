@@ -136,7 +136,10 @@ Voir [`esp32/README.md`](esp32/README.md) pour le contrat complet et à jour
   passage d'eau, à l'ouverture comme à la fermeture, voir plus bas).
   L'absence de message pour une
   clé ne veut pas dire "en panne", juste "rien de neuf" — le backend
-  s'abonne avec le wildcard `arrosage/+/etat/#`.
+  s'abonne avec le wildcard `arrosage/+/etat/#`. Les messages retenus que
+  le broker rejoue à l'abonnement ne sont ni restockés ni datés de
+  maintenant (date réelle inconnue) : un appareil éteint n'a donc pas l'air
+  "vu à l'instant" après un redémarrage du serveur.
 - Commande (serveur → device) : `arrosage/<device_id>/commande`, jamais
   retain, `{"vanne": "vanne_1", "action": "open", "duration_s": 600}` /
   `{"vanne": "vanne_1", "action": "close"}` / `{"action": "stop_all"}` /

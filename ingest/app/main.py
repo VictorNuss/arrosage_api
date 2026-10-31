@@ -57,9 +57,19 @@ def _on_zigbee_message(client, device_id, message):
 
 
 def _on_message(client, userdata, message):
+    # Message retenu rejoué par le broker à l'abonnement (retain=1 seulement
+    # dans ce cas, jamais pour un message publié pendant qu'on est abonné) :
+    # c'est une ancienne valeur, déjà stockée à sa réception. L'horodater
+    # maintenant ferait passer un appareil éteint (ou un ancien nom Zigbee)
+    # pour vivant à chaque redémarrage. Le get_status de _request_resync
+    # couvre les valeurs ratées pendant l'arrêt d'ingest, avec de vraies
+    # réponses des appareils allumés.
+    stale_replay = message.retain
+
     zigbee_device_id = zigbee.parse_topic(message.topic)
     if zigbee_device_id is not None:
-        _on_zigbee_message(client, zigbee_device_id, message)
+        if not stale_replay:
+            _on_zigbee_message(client, zigbee_device_id, message)
         return
 
     parsed_topic = parse_topic(message.topic)
@@ -75,6 +85,9 @@ def _on_message(client, userdata, message):
             log.exception("Payload d'info device invalide sur %s, message ignoré", message.topic)
             return
         _pending_device_info.put((device_id, column, value))
+        return
+
+    if stale_replay:
         return
 
     try:

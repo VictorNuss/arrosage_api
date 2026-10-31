@@ -7,8 +7,9 @@ from app import live_state
 
 
 class _FakeMessage:
-    def __init__(self, topic, payload_dict):
+    def __init__(self, topic, payload_dict, retain=False):
         self.topic = topic
+        self.retain = retain
         self.payload = json.dumps(payload_dict).encode("utf-8")
 
 
@@ -98,6 +99,16 @@ def test_on_message_updates_cache_for_a_valve():
     assert readings[("jardin-1", "vanne_1")]["value"] == 1.0
 
 
+@pytest.mark.parametrize(
+    "key,payload", [("humidity_pct", {"value": 100}), ("vanne_1", {"state": "open"})]
+)
+def test_on_message_ignores_retained_replay(key, payload):
+    """Régression : la valeur retenue d'un appareil éteint, rejouée à la
+    connexion du dashboard, était datée de maintenant ("vu il y a 1 min")."""
+    live_state._on_message(None, None, _FakeMessage(f"arrosage/arrosage-01/etat/{key}", payload, retain=True))
+    assert live_state.get_latest_readings() == []
+
+
 def test_on_message_only_touches_the_published_key():
     """Régression : contrairement à l'ancien contrat (JSON combiné), un
     message ne doit mettre à jour QUE sa propre clé, pas en effacer d'autres."""
@@ -120,7 +131,7 @@ def test_on_message_ignores_valve_payload_missing_state_field():
 
 
 def test_on_message_ignores_malformed_json():
-    message = type("M", (), {"topic": "arrosage/jardin-1/etat/temperature_c", "payload": b"{not json"})()
+    message = type("M", (), {"topic": "arrosage/jardin-1/etat/temperature_c", "payload": b"{not json", "retain": False})()
     live_state._on_message(None, None, message)
     assert live_state.get_latest_readings() == []
 

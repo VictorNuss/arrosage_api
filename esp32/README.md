@@ -63,7 +63,12 @@ Règles :
 - **L'absence d'un message pour une clé ne veut pas dire "capteur en
   panne"** : ça veut juste dire "rien de neuf depuis la dernière valeur
   connue". Le `retain` du broker redonne la dernière valeur connue à un
-  abonné qui (re)démarre ou se reconnecte.
+  abonné qui (re)démarre ou se reconnecte. Ce rejeu n'a pas de date :
+  `ingest` et le cache live du dashboard l'ignorent (la base a déjà la
+  valeur, avec sa vraie date de réception) ; seules les infos device (`ip`,
+  `fw_version`) retenues sont reprises. Les valeurs manquées pendant un
+  arrêt d'`ingest` sont récupérées par son `get_status` au démarrage, que
+  seuls les appareils allumés honorent.
 - Les métriques de vannes contiennent `vanne` dans leur nom, valeur
   `"open"`/`"closed"`/`"transitioning"` (chaînes) dans le champ `state`
   (aussi acceptés en synonymes : `"on"`/`"off"`, `"transition"`,

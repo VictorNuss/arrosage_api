@@ -8,8 +8,11 @@ Contrat (un topic par mesure/vanne, voir esp32/README.md) :
   - vanne   : {"state": "open"} / {"state": "closed"} / {"state": "transitioning"}
 Pas de champ "ts" : l'horodatage de réception MQTT fait foi. L'absence d'un
 message pour une clé ne veut pas dire "capteur en panne", juste "rien de
-neuf depuis la dernière valeur connue" (le broker republie la dernière
-valeur retenue à la (re)connexion).
+neuf depuis la dernière valeur connue". Les messages retenus que le broker
+rejoue à la (re)connexion sont ignorés : leur date réelle est inconnue, et
+les horodater à la réception ferait passer un appareil éteint pour vivant.
+La base (via ingest) a déjà ces valeurs avec leur vraie date, y compris
+l'état des vannes (journal permanent valve_events).
 
 Une électrovanne motorisée met un temps variable (~15s par défaut, pas
 figé, configurable côté firmware) à actionner réellement le passage d'eau,
@@ -144,6 +147,11 @@ def _on_message(client, userdata, message):
     if parsed is None:
         return
     device_id, metric = parsed
+
+    if message.retain:
+        # Rejeu à l'abonnement (voir docstring du module) : pas une nouvelle
+        # valeur, la base fournit la dernière connue avec sa vraie date.
+        return
 
     if metric in DEVICE_INFO_KEYS:
         # Alimentent devices.ip_address / devices.fw_version (via ingest),

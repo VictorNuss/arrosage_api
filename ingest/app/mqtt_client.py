@@ -119,7 +119,8 @@ def parse_payload(device_id, metric, payload_bytes):
 
     Payload attendu : {"value": 34.5} pour un capteur, {"state": "open"}
     pour une vanne. Pas de champ "ts" dans ce contrat : l'horodatage de
-    réception MQTT fait foi.
+    réception MQTT fait foi (d'où l'abandon des messages retenus rejoués à
+    l'abonnement, voir main._on_message).
     """
     data = json.loads(payload_bytes.decode("utf-8"))
     if not isinstance(data, dict):
