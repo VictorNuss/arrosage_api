@@ -474,7 +474,7 @@ def register_callbacks(app):
         sensor_metrics = [m for m in known_metrics if m not in valve_metrics]
 
         valve_df = queries.get_valve_history(device_ids, start, end)
-        history = queries.get_history(device_ids, sensor_metrics, start, end)
+        history = queries.get_history(device_ids, sensor_metrics, start, end, max_points=config.HISTORY_MAX_POINTS)
         # Même axe du temps pour la frise et toutes les mesures.
         start = displayed_start(start, valve_df, history)
 

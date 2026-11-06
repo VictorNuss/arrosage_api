@@ -2,7 +2,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, literal_column, select
 
 from . import config, live_state
 from .schema import (
@@ -174,20 +174,79 @@ def history_source(span: timedelta):
     return sensor_readings_daily
 
 
-def get_history(devices_filter: list[str], metrics: list[str], start: datetime, end: datetime) -> pd.DataFrame:
+_TIER_STEPS = {
+    "sensor_readings_1min": timedelta(minutes=1),
+    "sensor_readings_hourly": timedelta(hours=1),
+    "sensor_readings_daily": timedelta(days=1),
+}
+
+# Pas de ré-échantillonnage proposés, alignés sur des durées « rondes ». Pas
+# de multiple du jour : l'agrégat journalier est en jours locaux, un
+# time_bucket UTC par-dessus le décalerait.
+_RESAMPLE_STEPS = [
+    timedelta(minutes=m) for m in (1, 2, 5, 10, 15, 30)
+] + [timedelta(hours=h) for h in (1, 2, 3, 6, 12)]
+
+
+def resample_step(span: timedelta, max_points: int | None) -> timedelta | None:
+    """Pas de regroupement à appliquer à l'agrégat de history_source(span)
+    pour ne pas dépasser `max_points` points par courbe, ou None si le pas
+    natif de l'agrégat suffit déjà (ou si aucun pas proposé ne convient)."""
+    if not max_points:
+        return None
+    native = _TIER_STEPS[history_source(span).name]
+    if span / native <= max_points:
+        return None
+    for step in _RESAMPLE_STEPS:
+        if step > native and span / step <= max_points:
+            return step
+    return None
+
+
+def get_history(
+    devices_filter: list[str],
+    metrics: list[str],
+    start: datetime,
+    end: datetime,
+    max_points: int | None = None,
+) -> pd.DataFrame:
     """Moyenne par intervalle (minute, heure ou jour selon la durée, voir
-    history_source), colonnes time/device_id/metric/value."""
+    history_source), colonnes time/device_id/metric/value.
+
+    Avec `max_points`, les intervalles sont regroupés (voir resample_step)
+    pour rester sous ce nombre de points par courbe : moyenne pondérée par
+    le nombre d'échantillons de chaque intervalle. Sans, une ligne par
+    intervalle natif (garden.sun_hours compte des minutes)."""
     if not devices_filter or not metrics:
         return pd.DataFrame(columns=["time", "device_id", "metric", "value"])
 
     agg = history_source(end - start)
-    stmt = (
-        select(agg.c.bucket.label("time"), agg.c.device_id, agg.c.metric, agg.c.avg_value.label("value"))
-        .where(agg.c.device_id.in_(devices_filter))
-        .where(agg.c.metric.in_(metrics))
-        .where(agg.c.bucket.between(start, end))
-        .order_by(agg.c.bucket)
+    step = resample_step(end - start, max_points)
+    filters = (
+        agg.c.device_id.in_(devices_filter),
+        agg.c.metric.in_(metrics),
+        agg.c.bucket.between(start, end),
     )
+    if step is None:
+        stmt = (
+            select(agg.c.bucket.label("time"), agg.c.device_id, agg.c.metric, agg.c.avg_value.label("value"))
+            .where(*filters)
+            .order_by(agg.c.bucket)
+        )
+    else:
+        # Intervalle en littéral (pas issu d'une saisie : voir
+        # _RESAMPLE_STEPS) : avec un paramètre lié, SELECT et GROUP BY
+        # porteraient deux paramètres distincts et Postgres refuserait le
+        # regroupement.
+        interval = literal_column(f"INTERVAL '{int(step.total_seconds())} seconds'")
+        time = func.time_bucket(interval, agg.c.bucket).label("time")
+        value = (func.sum(agg.c.avg_value * agg.c.sample_count) / func.sum(agg.c.sample_count)).label("value")
+        stmt = (
+            select(time, agg.c.device_id, agg.c.metric, value)
+            .where(*filters)
+            .group_by(time, agg.c.device_id, agg.c.metric)
+            .order_by(time)
+        )
     with engine.connect() as conn:
         return pd.read_sql_query(stmt, conn)
 
