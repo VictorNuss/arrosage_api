@@ -527,8 +527,15 @@ def register_callbacks(app):
 
         return badges, countdowns, open_disabled, close_disabled, open_labels
 
-    @app.callback(Output("tank-gauge", "children"), Input("global-interval", "n_intervals"))
-    def update_tank_gauge(_n):
+    # Panneaux de la vue d'ensemble : rafraîchis lentement, et seulement
+    # quand l'onglet est affiché (un changement d'onglet les met à jour
+    # aussitôt).
+    overview_inputs = (Input("tabs", "active_tab"), Input("slow-interval", "n_intervals"))
+
+    @app.callback(Output("tank-gauge", "children"), *overview_inputs)
+    def update_tank_gauge(active_tab, _n):
+        if active_tab != "overview":
+            return no_update
         tank = queries.get_tank_level()
         if tank is None:
             return dbc.Alert(
@@ -540,8 +547,10 @@ def register_callbacks(app):
             className="h-100",
         )
 
-    @app.callback(Output("rain-outlook", "children"), Input("global-interval", "n_intervals"))
-    def update_rain_outlook(_n):
+    @app.callback(Output("rain-outlook", "children"), *overview_inputs)
+    def update_rain_outlook(active_tab, _n):
+        if active_tab != "overview":
+            return no_update
         outlook = queries.get_rain_outlook()
         if outlook is None:
             return dbc.Alert(
@@ -555,14 +564,18 @@ def register_callbacks(app):
             className="g-2 h-100",
         )
 
-    @app.callback(Output("soil-panel", "children"), Input("global-interval", "n_intervals"))
-    def update_soil_panel(_n):
+    @app.callback(Output("soil-panel", "children"), *overview_inputs)
+    def update_soil_panel(active_tab, _n):
+        if active_tab != "overview":
+            return no_update
         readings = overview.drop_abandoned_metrics(queries.get_latest_readings())
         rows = soil_panel.soil_sensor_rows(queries.get_devices(), readings)
         return soil_panel.build_soil_panel(rows)
 
-    @app.callback(Output("overview-cards", "children"), Input("global-interval", "n_intervals"))
-    def update_overview(_n):
+    @app.callback(Output("overview-cards", "children"), *overview_inputs)
+    def update_overview(active_tab, _n):
+        if active_tab != "overview":
+            return no_update
         devices = queries.get_devices()
         if devices.empty:
             return dbc.Alert("Aucun appareil n'a encore envoyé de données.", color="info")
@@ -836,7 +849,7 @@ def register_callbacks(app):
         Output("watering-runs-history", "children"),
         Input("tabs", "active_tab"),
         Input("programs-version", "data"),
-        Input("global-interval", "n_intervals"),
+        Input("slow-interval", "n_intervals"),
     )
     def update_runs_history(active_tab, _version, _n):
         if active_tab != "programs":

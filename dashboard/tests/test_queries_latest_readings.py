@@ -151,3 +151,16 @@ def test_merge_valve_journal_without_valves_keeps_readings():
     empty = pd.DataFrame(columns=["device_id", "metric", "value", "time"])
     merged = queries.merge_valve_journal(readings, empty)
     assert len(merged) == 1 and merged["direction"].isna().all()
+
+
+def test_db_snapshot_is_shared_by_callbacks_of_the_same_tick(monkeypatch):
+    """Vannes, cuve, sol, cartes : un seul aller-retour base par tick."""
+    calls = []
+    monkeypatch.setattr(queries, "_latest_cache", None)
+    monkeypatch.setattr(queries, "_fetch_db_latest_readings", lambda: calls.append(1) or _db_df([]))
+    queries._query_db_latest_readings()
+    queries._query_db_latest_readings()
+    assert len(calls) == 1
+    monkeypatch.setattr(queries.config, "LATEST_READINGS_CACHE_S", 0)
+    queries._query_db_latest_readings()
+    assert len(calls) == 2

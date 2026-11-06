@@ -29,6 +29,7 @@ def build_valve_panel():
     return html.Div(
         [
             dcc.Interval(id="global-interval", interval=config.OVERVIEW_REFRESH_INTERVAL_MS),
+            dcc.Interval(id="slow-interval", interval=config.SLOW_REFRESH_INTERVAL_MS),
             # Rafraîchit uniquement la structure du panneau (cartes, menu de
             # durée, boutons) : peu fréquent, exprès. Reconstruire les
             # boutons au même rythme que l'état (2s) ferait perdre des clics

@@ -323,7 +323,12 @@ def register_callbacks(app):
     def reload_devices(active_tab, _n):
         if active_tab != "firmware":
             return no_update
-        return load_devices(queries.get_devices(), queries.get_latest_readings())
+        # Dernières valeurs (précises, mais limitées aux 48 dernières heures)
+        # complétées par l'agrégat horaire pour les devices muets depuis plus
+        # longtemps : load_devices garde la plus récente par device.
+        latest = queries.get_latest_readings()[["device_id", "time"]]
+        seen = pd.concat([latest, queries.get_device_last_seen()], ignore_index=True)
+        return load_devices(queries.get_devices(), seen)
 
     @app.callback(
         Output("ota-device-select", "options"),

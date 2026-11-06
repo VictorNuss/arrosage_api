@@ -1,3 +1,5 @@
+import threading
+import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
 
@@ -69,7 +71,30 @@ def get_known_metrics() -> list[str]:
 _LIVE_CACHE_STALE_BUFFER = timedelta(seconds=5)
 
 
+_latest_cache_lock = threading.Lock()
+_latest_cache: tuple[float, pd.DataFrame] | None = None
+
+
 def _query_db_latest_readings() -> pd.DataFrame:
+    """Instantané base des dernières valeurs, mis en cache
+    LATEST_READINGS_CACHE_S : à chaque tick, plusieurs callbacks (vannes,
+    cuve, sol, cartes) le demandent en même temps."""
+    global _latest_cache
+    with _latest_cache_lock:
+        now = time.monotonic()
+        if _latest_cache is not None and now - _latest_cache[0] < config.LATEST_READINGS_CACHE_S:
+            return _latest_cache[1].copy()
+        df = _fetch_db_latest_readings()
+        _latest_cache = (now, df)
+        return df.copy()
+
+
+def _fetch_db_latest_readings() -> pd.DataFrame:
+    # Fenêtre bornée : sans elle, DISTINCT ON parcourt les 15 jours de brut,
+    # chunks compressés compris. Une mesure plus ancienne est de toute façon
+    # abandonnée (overview.drop_abandoned_metrics) ; les vannes viennent du
+    # journal permanent ci-dessous, sans limite.
+    since = func.now() - func.make_interval(0, 0, 0, 0, config.LATEST_READINGS_MAX_AGE_HOURS)
     stmt = (
         select(
             sensor_readings.c.device_id,
@@ -78,6 +103,7 @@ def _query_db_latest_readings() -> pd.DataFrame:
             sensor_readings.c.unit,
             sensor_readings.c.time,
         )
+        .where(sensor_readings.c.time > since)
         .distinct(sensor_readings.c.device_id, sensor_readings.c.metric)
         .order_by(sensor_readings.c.device_id, sensor_readings.c.metric, sensor_readings.c.time.desc())
     )
@@ -94,6 +120,16 @@ def _query_db_latest_readings() -> pd.DataFrame:
         db_df = pd.read_sql_query(stmt, conn)
         valve_df = pd.read_sql_query(valve_stmt, conn)
     return merge_valve_journal(db_df, valve_df)
+
+
+def get_device_last_seen() -> pd.DataFrame:
+    """Dernière heure de mesure par device (colonnes device_id/time), depuis
+    l'agrégat horaire : couvre les devices muets depuis plus longtemps que
+    la fenêtre de get_latest_readings, sans parcourir le brut."""
+    h = sensor_readings_hourly
+    stmt = select(h.c.device_id, func.max(h.c.bucket).label("time")).group_by(h.c.device_id)
+    with engine.connect() as conn:
+        return pd.read_sql_query(stmt, conn)
 
 
 def merge_valve_journal(readings_df: pd.DataFrame, valve_df: pd.DataFrame) -> pd.DataFrame:
