@@ -336,9 +336,11 @@ def get_weather_observed(days: int = 30) -> pd.DataFrame:
         return pd.read_sql_query(stmt, conn)
 
 
-def get_valve_states() -> pd.DataFrame:
-    """Dernier état connu de chaque vanne (toutes appareils confondus)."""
-    latest = get_latest_readings()
+def get_valve_states(latest: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Dernier état connu de chaque vanne (toutes appareils confondus),
+    extrait de `latest` (get_latest_readings()) s'il est déjà chargé."""
+    if latest is None:
+        latest = get_latest_readings()
     if latest.empty:
         return latest
     return latest[latest["metric"].apply(is_valve_metric)].sort_values(["device_id", "metric"])
@@ -395,11 +397,14 @@ def get_known_valves() -> list[dict]:
 
 def get_soil_sensors() -> list[dict]:
     """Appareils ayant déjà publié une humidité du sol, avec leur nom :
-    [{"device_id": ..., "name": ...}], triés par nom."""
+    [{"device_id": ..., "name": ...}], triés par nom. Depuis l'agrégat
+    journalier (jamais purgé, une ligne par jour) plutôt que le brut : plus
+    léger, et un capteur muet depuis plus de 15 jours reste proposé."""
+    d = sensor_readings_daily
     stmt = (
-        select(sensor_readings.c.device_id, func.coalesce(devices.c.name, sensor_readings.c.device_id).label("name"))
-        .select_from(sensor_readings.outerjoin(devices, devices.c.device_id == sensor_readings.c.device_id))
-        .where(sensor_readings.c.metric == config.SOIL_MOISTURE_METRIC)
+        select(d.c.device_id, func.coalesce(devices.c.name, d.c.device_id).label("name"))
+        .select_from(d.outerjoin(devices, devices.c.device_id == d.c.device_id))
+        .where(d.c.metric == config.SOIL_MOISTURE_METRIC)
         .distinct()
     )
     with engine.connect() as conn:

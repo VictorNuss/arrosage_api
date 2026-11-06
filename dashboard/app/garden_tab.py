@@ -187,7 +187,7 @@ def collect_zone_data(zones, now=None):
     names = {row["device_id"]: row.get("name") or row["device_id"] for _, row in queries.get_devices().iterrows()}
 
     valve_states = {}
-    for row in queries.get_valve_states().itertuples():
+    for row in queries.get_valve_states(latest_df).itertuples():
         value = row.value
         valve_states[(row.device_id, row.metric)] = "open" if value >= 0.75 else "closed" if value <= 0.25 else "transition"
 
