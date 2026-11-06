@@ -31,10 +31,8 @@ OVERVIEW_REFRESH_INTERVAL_MS = 2_000
 # Panneaux qui évoluent lentement (cuve, pluie prévue, sol, cartes des
 # appareils, historique des programmes) : pas besoin du rythme des vannes.
 SLOW_REFRESH_INTERVAL_MS = 30_000
-# Dernières valeurs (queries.get_latest_readings) : seul le brut récent est
-# lu (au-delà, une mesure est abandonnée, voir OVERVIEW_METRIC_MAX_AGE_HOURS),
-# et le résultat est partagé par les callbacks d'un même tick.
-LATEST_READINGS_MAX_AGE_HOURS = 48
+# Dernières valeurs (queries.get_latest_readings) : instantané base partagé
+# par les callbacks d'un même tick (vannes, cuve, sol, cartes).
 LATEST_READINGS_CACHE_S = 1.0
 
 # Métrique utilisée comme niveau de la cuve à eau (hauteur d'eau depuis le

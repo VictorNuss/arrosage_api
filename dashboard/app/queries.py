@@ -90,11 +90,10 @@ def _query_db_latest_readings() -> pd.DataFrame:
 
 
 def _fetch_db_latest_readings() -> pd.DataFrame:
-    # Fenêtre bornée : sans elle, DISTINCT ON parcourt les 15 jours de brut,
-    # chunks compressés compris. Une mesure plus ancienne est de toute façon
-    # abandonnée (overview.drop_abandoned_metrics) ; les vannes viennent du
-    # journal permanent ci-dessous, sans limite.
-    since = func.now() - func.make_interval(0, 0, 0, 0, config.LATEST_READINGS_MAX_AGE_HOURS)
+    # Pas de borne de temps : l'index (device_id, metric, time DESC) rend
+    # déjà ce DISTINCT ON rapide (~7 ms sur 14 jours de brut à 5 s, chunks
+    # compressés compris), et une borne ferait perdre les dernières valeurs
+    # anciennes (cuve muette, "dernière mesure" de l'onglet Firmware).
     stmt = (
         select(
             sensor_readings.c.device_id,
@@ -103,7 +102,6 @@ def _fetch_db_latest_readings() -> pd.DataFrame:
             sensor_readings.c.unit,
             sensor_readings.c.time,
         )
-        .where(sensor_readings.c.time > since)
         .distinct(sensor_readings.c.device_id, sensor_readings.c.metric)
         .order_by(sensor_readings.c.device_id, sensor_readings.c.metric, sensor_readings.c.time.desc())
     )
@@ -120,16 +118,6 @@ def _fetch_db_latest_readings() -> pd.DataFrame:
         db_df = pd.read_sql_query(stmt, conn)
         valve_df = pd.read_sql_query(valve_stmt, conn)
     return merge_valve_journal(db_df, valve_df)
-
-
-def get_device_last_seen() -> pd.DataFrame:
-    """Dernière heure de mesure par device (colonnes device_id/time), depuis
-    l'agrégat horaire : couvre les devices muets depuis plus longtemps que
-    la fenêtre de get_latest_readings, sans parcourir le brut."""
-    h = sensor_readings_hourly
-    stmt = select(h.c.device_id, func.max(h.c.bucket).label("time")).group_by(h.c.device_id)
-    with engine.connect() as conn:
-        return pd.read_sql_query(stmt, conn)
 
 
 def merge_valve_journal(readings_df: pd.DataFrame, valve_df: pd.DataFrame) -> pd.DataFrame:
