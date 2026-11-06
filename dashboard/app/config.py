@@ -28,6 +28,12 @@ HISTORY_MAX_POINTS = 1000
 # jour instantanément à la réception MQTT) : un intervalle court reste bon
 # marché puisqu'il ne s'agit plus d'attendre le batching de l'ingest.
 OVERVIEW_REFRESH_INTERVAL_MS = 2_000
+# Panneaux qui évoluent lentement (cuve, pluie prévue, sol, cartes des
+# appareils, historique des programmes) : pas besoin du rythme des vannes.
+SLOW_REFRESH_INTERVAL_MS = 30_000
+# Dernières valeurs (queries.get_latest_readings) : instantané base partagé
+# par les callbacks d'un même tick (vannes, cuve, sol, cartes).
+LATEST_READINGS_CACHE_S = 1.0
 
 # Métrique utilisée comme niveau de la cuve à eau (hauteur d'eau depuis le
 # fond, calculée par ingest à partir de la distance ultrason brute, voir

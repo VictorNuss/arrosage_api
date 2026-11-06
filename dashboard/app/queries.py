@@ -1,3 +1,5 @@
+import threading
+import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
 
@@ -69,7 +71,29 @@ def get_known_metrics() -> list[str]:
 _LIVE_CACHE_STALE_BUFFER = timedelta(seconds=5)
 
 
+_latest_cache_lock = threading.Lock()
+_latest_cache: tuple[float, pd.DataFrame] | None = None
+
+
 def _query_db_latest_readings() -> pd.DataFrame:
+    """Instantané base des dernières valeurs, mis en cache
+    LATEST_READINGS_CACHE_S : à chaque tick, plusieurs callbacks (vannes,
+    cuve, sol, cartes) le demandent en même temps."""
+    global _latest_cache
+    with _latest_cache_lock:
+        now = time.monotonic()
+        if _latest_cache is not None and now - _latest_cache[0] < config.LATEST_READINGS_CACHE_S:
+            return _latest_cache[1].copy()
+        df = _fetch_db_latest_readings()
+        _latest_cache = (now, df)
+        return df.copy()
+
+
+def _fetch_db_latest_readings() -> pd.DataFrame:
+    # Pas de borne de temps : l'index (device_id, metric, time DESC) rend
+    # déjà ce DISTINCT ON rapide (~7 ms sur 14 jours de brut à 5 s, chunks
+    # compressés compris), et une borne ferait perdre les dernières valeurs
+    # anciennes (cuve muette, "dernière mesure" de l'onglet Firmware).
     stmt = (
         select(
             sensor_readings.c.device_id,
