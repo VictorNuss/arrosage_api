@@ -54,13 +54,6 @@ def set_device_ip(device_id: str, ip_address: str) -> None:
         )
 
 
-def get_known_metrics() -> list[str]:
-    stmt = select(sensor_readings.c.metric).distinct().order_by(sensor_readings.c.metric)
-    with engine.connect() as conn:
-        df = pd.read_sql_query(stmt, conn)
-    return df["metric"].tolist()
-
-
 # Deux abonnés MQTT indépendants (ingest et le cache mémoire du dashboard)
 # reçoivent le même message à quelques instants près l'un de l'autre : leurs
 # horodatages de réception peuvent différer de quelques millisecondes sans
@@ -229,7 +222,7 @@ def resample_step(span: timedelta, max_points: int | None) -> timedelta | None:
 
 def get_history(
     devices_filter: list[str],
-    metrics: list[str],
+    metrics: list[str] | None,
     start: datetime,
     end: datetime,
     max_points: int | None = None,
@@ -240,17 +233,19 @@ def get_history(
     Avec `max_points`, les intervalles sont regroupés (voir resample_step)
     pour rester sous ce nombre de points par courbe : moyenne pondérée par
     le nombre d'échantillons de chaque intervalle. Sans, une ligne par
-    intervalle natif (garden.sun_hours compte des minutes)."""
-    if not devices_filter or not metrics:
+    intervalle natif (garden.sun_hours compte des minutes).
+
+    `metrics` à None : toutes les mesures présentes dans l'agrégat sur la
+    période, y compris celles d'un capteur retiré depuis (le brut, lui, ne
+    garde que 15 jours)."""
+    if not devices_filter or metrics == []:
         return pd.DataFrame(columns=["time", "device_id", "metric", "value"])
 
     agg = history_source(end - start)
     step = resample_step(end - start, max_points)
-    filters = (
-        agg.c.device_id.in_(devices_filter),
-        agg.c.metric.in_(metrics),
-        agg.c.bucket.between(start, end),
-    )
+    filters = [agg.c.device_id.in_(devices_filter), agg.c.bucket.between(start, end)]
+    if metrics is not None:
+        filters.append(agg.c.metric.in_(metrics))
     if step is None:
         stmt = (
             select(agg.c.bucket.label("time"), agg.c.device_id, agg.c.metric, agg.c.avg_value.label("value"))
