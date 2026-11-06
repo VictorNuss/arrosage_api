@@ -469,19 +469,22 @@ def register_callbacks(app):
         device_ids = selected_devices or list(device_names)
         start, end = period_bounds(period)
 
-        known_metrics = [m for m in queries.get_known_metrics() if m not in HIDDEN_METRICS]
-        valve_metrics = {m for m in known_metrics if queries.is_valve_metric(m)}
-        sensor_metrics = [m for m in known_metrics if m not in valve_metrics]
-
         valve_df = queries.get_valve_history(device_ids, start, end)
-        history = queries.get_history(device_ids, sensor_metrics, start, end, max_points=config.HISTORY_MAX_POINTS)
+        # Toutes les mesures de l'agrégat sur la période (pas seulement celles
+        # du brut, limité à 15 jours) : un capteur retiré reste visible en
+        # 30 jours / 1 an. Les vannes ont leur propre frise (valve_events).
+        history = queries.get_history(device_ids, None, start, end, max_points=config.HISTORY_MAX_POINTS)
+        history = history[
+            ~history["metric"].isin(HIDDEN_METRICS) & ~history["metric"].map(queries.is_valve_metric).astype(bool)
+        ]
+        sensor_metrics = sorted(history["metric"].unique())
         # Même axe du temps pour la frise et toutes les mesures.
         start = displayed_start(start, valve_df, history)
 
         latest = queries.get_latest_readings()
         valve_keys = sorted(
             {(row.device_id, row.metric) for row in latest.itertuples()
-             if row.device_id in device_ids and row.metric in valve_metrics}
+             if row.device_id in device_ids and queries.is_valve_metric(row.metric)}
             | set(zip(valve_df["device_id"], valve_df["metric"]))
         )
         intervals = watering_intervals(valve_df, start, end)
@@ -493,7 +496,6 @@ def register_callbacks(app):
         cards = [
             build_metric_card(metric, history[history["metric"] == metric], units.get(metric), device_names, start, end)
             for metric in sensor_metrics
-            if (history["metric"] == metric).any()
         ]
         return watering, dbc.Row(cards, className="g-3")
 
