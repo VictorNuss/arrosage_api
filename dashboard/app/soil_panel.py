@@ -1,6 +1,8 @@
-"""Panneau "Humidité du sol" de la vue d'ensemble : une jauge par capteur de
-sol (ESP32 ou Zigbee, tous publient "humidity_pct"), pour comparer les
-zones du jardin d'un coup d'œil."""
+"""Panneau "Humidité du sol" de la vue d'ensemble : une ligne par zone du
+Potager, avec la même valeur calibrée et la même cible de culture que
+l'onglet Potager (garden.py), pour ne jamais montrer deux chiffres pour une
+même planche. Un capteur de sol rattaché à aucune zone garde sa ligne, en
+valeur brute."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -8,8 +10,9 @@ import dash_bootstrap_components as dbc
 import pandas as pd
 from dash import html
 
-from . import config
+from . import config, garden
 from .formatting import format_last_seen
+from .garden_tab import STATUS_COLORS, build_moisture_gauge
 
 
 def soil_sensor_rows(devices_df: pd.DataFrame, readings_df: pd.DataFrame) -> list[dict]:
@@ -46,6 +49,54 @@ def soil_sensor_rows(devices_df: pd.DataFrame, readings_df: pd.DataFrame) -> lis
     return sorted(rows, key=lambda r: (r["name"], r["device_id"]))
 
 
+def soil_rows(zones: list[dict], devices_df: pd.DataFrame, readings_df: pd.DataFrame) -> list[dict]:
+    """Zones ayant au moins un capteur, puis capteurs de sol hors zone.
+    Chaque entrée : {kind ("zone"/"sensor"), key, name, crop, moisture_pct,
+    status, battery_pct (la plus faible, ou None), time (mesure d'humidité la
+    plus récente, ou None)}."""
+    sensors = soil_sensor_rows(devices_df, readings_df)
+    by_device = {r["device_id"]: r for r in sensors}
+    latest, _times = garden.latest_by_device(readings_df)
+
+    rows = []
+    zoned = set()
+    for zone in zones:
+        if not zone["sensors"]:
+            continue
+        zoned.update(zone["sensors"])
+        own = [by_device[d] for d in zone["sensors"] if d in by_device]
+        moisture = garden.zone_moisture(zone, latest)
+        batteries = [r["battery_pct"] for r in own if r["battery_pct"] is not None]
+        rows.append(
+            {
+                "kind": "zone",
+                "key": f"zone-{zone['id']}",
+                "name": zone["name"],
+                "crop": zone.get("crop"),
+                "moisture_pct": moisture,
+                "status": garden.moisture_status(moisture, zone.get("crop")),
+                "battery_pct": min(batteries) if batteries else None,
+                "time": max((r["time"] for r in own), default=None),
+            }
+        )
+    for r in sensors:
+        if r["device_id"] in zoned:
+            continue
+        rows.append(
+            {
+                "kind": "sensor",
+                "key": r["device_id"],
+                "name": r["name"],
+                "crop": None,
+                "moisture_pct": r["moisture_pct"],
+                "status": None,
+                "battery_pct": r["battery_pct"],
+                "time": r["time"],
+            }
+        )
+    return rows
+
+
 def moisture_color(moisture_pct: float) -> str:
     if moisture_pct < config.SOIL_DRY_PCT:
         return "warning"
@@ -59,7 +110,7 @@ def is_stale(ts, now=None) -> bool:
     return ts is None or pd.isna(ts) or now - pd.Timestamp(ts).to_pydatetime() > timedelta(hours=config.SOIL_STALE_HOURS)
 
 
-def _build_sensor_row(row):
+def _build_row(row):
     stale = is_stale(row["time"])
     footer = [html.I(className="bi bi-clock me-1"), f"Vu {format_last_seen(row['time'])}"]
     if stale:
@@ -72,26 +123,38 @@ def _build_sensor_row(row):
             dbc.Badge([html.I(className="bi bi-battery me-1"), f"{battery:.0f} %"], color="danger", className="ms-2")
         )
 
+    moisture = row["moisture_pct"]
+    value = "–" if moisture is None else f"{moisture:.0f} %"
+    if row["kind"] == "zone":
+        icon = "bi-flower2 text-success"
+        crop = row["crop"]
+        status = row["status"]
+        gauge = build_moisture_gauge(moisture, crop, status)
+        detail = [dbc.Badge(garden.STATUS_LABELS[status], color=STATUS_COLORS[status], className="me-2")]
+        if crop:
+            detail.append(html.Span(f"{crop['name']} {crop['moisture_min']}–{crop['moisture_max']} %", className="me-2"))
+    else:
+        icon = "bi-moisture text-primary"
+        gauge = dbc.Progress(
+            value=max(0.0, min(moisture, 100.0)), color=moisture_color(moisture), style={"height": "8px"}, className="my-1"
+        )
+        detail = [html.Span("capteur hors zone, valeur brute", className="me-2")]
+
     return dbc.Col(
         [
             html.Div(
                 [
-                    html.Span([html.I(className="bi bi-flower1 me-2 text-primary"), row["name"], *badges]),
-                    html.Span(f"{row['moisture_pct']:.0f} %", className="fw-semibold"),
+                    html.Span([html.I(className=f"bi {icon} me-2"), row["name"], *badges]),
+                    html.Span(value, className="fw-semibold"),
                 ],
                 className="d-flex justify-content-between align-items-center",
-                title=row["device_id"],
+                title=row["key"],
             ),
-            dbc.Progress(
-                value=max(0.0, min(row["moisture_pct"], 100.0)),
-                color=moisture_color(row["moisture_pct"]),
-                style={"height": "8px", "opacity": 0.5 if stale else 1},
-                className="my-1",
-            ),
-            html.Div(footer, className="text-muted small"),
+            html.Div(gauge, style={"opacity": 0.5 if stale else 1}),
+            html.Div([*detail, html.Span(footer)], className="text-muted small"),
         ],
         md=6,
-        lg=3,
+        lg=4,
         className="py-2",
     )
 
@@ -104,7 +167,7 @@ def build_soil_panel(rows: list[dict]):
     return dbc.Card(
         [
             dbc.CardHeader([html.I(className="bi bi-moisture me-2"), "Humidité du sol"], className="fw-semibold"),
-            dbc.CardBody(dbc.Row([_build_sensor_row(row) for row in rows], className="gx-4"), className="py-1"),
+            dbc.CardBody(dbc.Row([_build_row(row) for row in rows], className="gx-4"), className="py-1"),
         ],
         className="mb-3",
     )

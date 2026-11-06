@@ -8,6 +8,7 @@ import dash_bootstrap_components as dbc
 
 from . import config, mqtt_control, overview, queries, soil_panel, valve_timers
 from .formatting import format_last_seen, format_metric_value, metric_icon, metric_label
+from .layout import VALVE_PANEL_TABS
 
 _VALVE_OPEN_COLOR = "#28a745"
 _VALVE_CLOSED_COLOR = "#dc3545"
@@ -212,9 +213,13 @@ def _build_metric_item(reading):
 
 
 def _build_device_card(device_row, readings_for_device: pd.DataFrame):
-    metric_items = [_build_metric_item(reading) for _, reading in readings_for_device.sort_values("metric").iterrows()]
-
+    # "Vu" porte sur tout ce que le device a publié (vannes comprises), la
+    # liste seulement sur ce qui n'est pas déjà affiché ailleurs.
     last_seen = readings_for_device["time"].max() if not readings_for_device.empty else pd.NaT
+    shown = overview.card_metrics(readings_for_device)
+    metric_items = [_build_metric_item(reading) for _, reading in shown.sort_values("metric").iterrows()]
+    if not metric_items:
+        metric_items = [dbc.ListGroupItem("Rien de plus (vannes, cuve et sol sont affichés plus haut).", className="text-muted small")]
 
     return dbc.Col(
         dbc.Card(
@@ -466,6 +471,10 @@ def register_callbacks(app):
             message, color="success" if ok else "danger", dismissable=True, duration=6000, className="py-2"
         )
 
+    @app.callback(Output("valve-panel-wrap", "style"), Input("tabs", "active_tab"))
+    def toggle_valve_panel(active_tab):
+        return None if active_tab in VALVE_PANEL_TABS else {"display": "none"}
+
     @app.callback(
         Output("valve-panel", "children"),
         Input("tabs", "active_tab"),
@@ -486,8 +495,11 @@ def register_callbacks(app):
         Output({"type": "valve-close-btn", "device": ALL, "metric": ALL}, "disabled"),
         Output({"type": "valve-open-btn", "device": ALL, "metric": ALL}, "children"),
         Input("global-interval", "n_intervals"),
+        State("tabs", "active_tab"),
     )
-    def update_valve_badges(_n):
+    def update_valve_badges(_n, active_tab):
+        if active_tab not in VALVE_PANEL_TABS:
+            raise PreventUpdate
         valves = queries.get_valve_states()
         state_by_key = {
             (row["device_id"], row["metric"]): (row["value"], row.get("direction"))
@@ -569,8 +581,7 @@ def register_callbacks(app):
         if active_tab != "overview":
             return no_update
         readings = overview.drop_abandoned_metrics(queries.get_latest_readings())
-        rows = soil_panel.soil_sensor_rows(queries.get_devices(), readings)
-        return soil_panel.build_soil_panel(rows)
+        return soil_panel.build_soil_panel(soil_panel.soil_rows(queries.get_zones(), queries.get_devices(), readings))
 
     @app.callback(Output("overview-cards", "children"), *overview_inputs)
     def update_overview(active_tab, _n):

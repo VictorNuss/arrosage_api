@@ -62,3 +62,37 @@ def test_is_stale():
     assert soil_panel.is_stale(NOW - timedelta(hours=7), now=NOW) is True
     assert soil_panel.is_stale(NOW - timedelta(hours=1), now=NOW) is False
     assert soil_panel.is_stale(None, now=NOW) is True
+
+
+def _zone(zone_id, name, sensors, crop=None, dry=None, wet=None):
+    return {"id": zone_id, "name": name, "sensors": sensors, "crop": crop,
+            "moisture_dry_ref": dry, "moisture_wet_ref": wet}
+
+
+def test_soil_rows_show_calibrated_zone_moisture_then_unzoned_sensors():
+    """Même chiffre que l'onglet Potager : valeur calibrée par zone. Un
+    capteur hors zone garde sa valeur brute."""
+    readings = _readings(
+        [
+            ("sol-a", "humidity_pct", 30.0, "%", NOW, None),
+            ("sol-b", "humidity_pct", 50.0, "%", NOW - timedelta(minutes=5), None),
+            ("sol-b", "battery_pct", 12.0, "%", NOW, None),
+            ("sol-libre", "humidity_pct", 70.0, "%", NOW, None),
+        ]
+    )
+    tomate = {"name": "Tomate", "moisture_min": 40, "moisture_max": 60}
+    zones = [
+        _zone(1, "Tomates", ["sol-a", "sol-b"], crop=tomate, dry=20.0, wet=60.0),
+        _zone(2, "Vide", []),
+    ]
+
+    rows = soil_panel.soil_rows(zones, _devices([("sol-libre", "Libre")]), readings)
+
+    assert [(r["kind"], r["name"]) for r in rows] == [("zone", "Tomates"), ("sensor", "Libre")]
+    zone = rows[0]
+    # (30-20)/40*100 = 25 et (50-20)/40*100 = 75 -> 50, dans la cible 40-60.
+    assert zone["moisture_pct"] == 50.0
+    assert zone["status"] == "ok"
+    assert zone["battery_pct"] == 12.0
+    assert rows[1]["moisture_pct"] == 70.0
+    assert soil_panel.build_soil_panel(rows) is not None
