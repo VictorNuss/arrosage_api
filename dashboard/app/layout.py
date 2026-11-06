@@ -23,9 +23,16 @@ def build_header():
     )
 
 
+# Onglets qui affichent le panneau des vannes : ailleurs (historique, météo,
+# programmes, firmware) il ne ferait que repousser le contenu, surtout sur
+# téléphone.
+VALVE_PANEL_TABS = {"overview", "garden"}
+
+
 def build_valve_panel():
-    """Panneau persistant (visible quel que soit l'onglet actif) listant
-    l'état de toutes les vannes en un coup d'œil."""
+    """Panneau des vannes, au-dessus des onglets de VALVE_PANEL_TABS (masqué
+    ailleurs, voir callbacks.toggle_valve_panel). Les intervalles restent
+    en dehors de la partie masquée."""
     return html.Div(
         [
             dcc.Interval(id="global-interval", interval=config.OVERVIEW_REFRESH_INTERVAL_MS),
@@ -35,11 +42,16 @@ def build_valve_panel():
             # boutons au même rythme que l'état (2s) ferait perdre des clics
             # si l'utilisateur clique juste au moment d'un rafraîchissement.
             dcc.Interval(id="valve-structure-interval", interval=20_000),
-            html.Div([html.I(className="bi bi-droplet-half me-1"), "Vannes"], className="section-title"),
-            html.Div(id="valve-command-feedback"),
-            html.Div(id="valve-panel"),
-        ],
-        className="pb-2",
+            html.Div(
+                [
+                    html.Div([html.I(className="bi bi-droplet-half me-1"), "Vannes"], className="section-title"),
+                    html.Div(id="valve-command-feedback"),
+                    html.Div(id="valve-panel"),
+                ],
+                id="valve-panel-wrap",
+                className="pb-2",
+            ),
+        ]
     )
 
 
@@ -219,12 +231,13 @@ def build_layout():
             build_valve_panel(),
             dbc.Tabs(
                 [
+                    # Usage quotidien d'abord, administration (firmware) en dernier.
                     dbc.Tab(build_overview_tab(), label="Vue d'ensemble", tab_id="overview"),
                     dbc.Tab(build_garden_tab(), label="Potager", tab_id="garden"),
+                    dbc.Tab(build_programs_tab(), label="Programmes", tab_id="programs"),
                     dbc.Tab(build_history_tab(), label="Historique", tab_id="history"),
                     dbc.Tab(build_weather_tab(), label="Météo", tab_id="weather"),
                     dbc.Tab(build_firmware_tab(), label="Firmware", tab_id="firmware"),
-                    dbc.Tab(build_programs_tab(), label="Programmes", tab_id="programs"),
                 ],
                 id="tabs",
                 active_tab="overview",

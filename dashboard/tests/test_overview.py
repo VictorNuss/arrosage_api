@@ -57,3 +57,21 @@ def test_latest_row_wins_when_db_and_live_cache_both_have_the_key():
     )
     kept = overview.drop_abandoned_metrics(readings, NOW)
     assert kept["value"].tolist() == [42.0]
+
+
+def test_device_cards_skip_what_the_overview_already_shows():
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    readings = pd.DataFrame(
+        [
+            ("jardin", "vanne_1", 0.0, None, now),
+            ("jardin", "water_level_cm", 80.0, "cm", now),
+            ("jardin", "water_distance_cm", 70.0, "cm", now),
+            ("jardin", "humidity_pct", 40.0, "%", now),
+            ("jardin", "battery_v", 0.0, "V", now),
+            ("jardin", "temperature_c", 18.0, "°C", now),
+        ],
+        columns=["device_id", "metric", "value", "unit", "time"],
+    )
+    assert overview.card_metrics(readings)["metric"].tolist() == ["temperature_c"]

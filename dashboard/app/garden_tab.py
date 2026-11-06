@@ -13,7 +13,7 @@ from . import config, garden, queries
 from .formatting import format_last_seen, metric_label
 from .history_tab import format_duration, watering_intervals
 
-_STATUS_COLORS = {"dry": "danger", "ok": "success", "wet": "info", "unknown": "secondary"}
+STATUS_COLORS = {"dry": "danger", "ok": "success", "wet": "info", "unknown": "secondary"}
 _WATERING_STYLES = {"frequent": "régulier, sol toujours frais", "deep": "profond et espacé"}
 # Dernier arrosage recherché sur cette fenêtre (journal des vannes).
 _LAST_WATERING_LOOKBACK = timedelta(days=14)
@@ -48,7 +48,7 @@ def build_moisture_gauge(moisture, crop, status):
         )
     if moisture is not None:
         children.append(
-            html.Div(className=f"moisture-marker bg-{_STATUS_COLORS[status]}",
+            html.Div(className=f"moisture-marker bg-{STATUS_COLORS[status]}",
                      style={"left": f"{min(100, max(0, moisture))}%"})
         )
     return html.Div(children, className="moisture-track")
@@ -79,7 +79,7 @@ def build_zone_card(zone, data):
             ]
         ),
         build_moisture_gauge(moisture, crop, status),
-        dbc.Badge(garden.STATUS_LABELS[status], color=_STATUS_COLORS[status], className="mb-2"),
+        dbc.Badge(garden.STATUS_LABELS[status], color=STATUS_COLORS[status], className="mb-2"),
     ]
 
     chips = []

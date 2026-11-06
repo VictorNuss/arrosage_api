@@ -39,3 +39,23 @@ def active_device_ids(readings_df: pd.DataFrame, now=None) -> set[str]:
     times = pd.to_datetime(readings_df["time"], utc=True)
     cutoff = pd.Timestamp(now - timedelta(hours=config.OVERVIEW_DEVICE_MAX_AGE_HOURS))
     return set(readings_df.loc[times >= cutoff, "device_id"])
+
+
+# Mesures déjà affichées ailleurs sur la vue d'ensemble, donc absentes des
+# cartes des appareils : vannes (panneau des vannes), cuve (jauge),
+# humidité du sol (panneau par zone, valeur calibrée) ; battery_v est une
+# constante (device alimenté secteur).
+CARD_HIDDEN_METRICS = {
+    config.TANK_LEVEL_METRIC,
+    "water_distance_cm",
+    config.SOIL_MOISTURE_METRIC,
+    "battery_v",
+}
+
+
+def card_metrics(readings_df: pd.DataFrame) -> pd.DataFrame:
+    """Lignes à montrer sur les cartes des appareils."""
+    if readings_df.empty:
+        return readings_df
+    hidden = readings_df["metric"].isin(CARD_HIDDEN_METRICS) | readings_df["metric"].map(queries.is_valve_metric).astype(bool)
+    return readings_df[~hidden]
