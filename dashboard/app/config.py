@@ -17,6 +17,11 @@ DATABASE_URL = (
 # conservation de chaque palier (15 jours pour la minute, 3 ans pour l'heure).
 HISTORY_1MIN_MAX_DAYS = 8
 HISTORY_HOURLY_MAX_DAYS = 95
+# Points par courbe au plus dans l'onglet historique : au-delà, les
+# intervalles de l'agrégat sont regroupés (7 jours en 1 minute = 10 080
+# points, regroupés par 15 minutes = 672). Au-delà, le tracé (SVG) et le
+# transfert vers le navigateur deviennent lents.
+HISTORY_MAX_POINTS = 1000
 
 # Le panneau vannes/vue d'ensemble interroge get_latest_readings(), qui
 # fusionne la base avec le cache mémoire alimenté par live_state.py (mis à
